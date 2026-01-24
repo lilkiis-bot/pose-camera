@@ -50,18 +50,16 @@
         const switchBtn = document.getElementById('switch-btn');
         const startOverlay = document.getElementById('start-overlay');
 
-        // === [오디오 및 상태 설정] ===
-        let successAudio = null; // 오디오 객체를 저장할 변수
+        let successAudio = null;
         let wasSuccessLastFrame = false;
         let isFrontCamera = true;
         let currentStream = null;
         let pose = null;
         let isRunning = false;
 
-        // === [에너지 빔 효과 설정] ===
         let activeBeams = [];
-        const BEAM_SPEED = 30; // 빔 속도
-        const BEAM_LENGTH = 150; // 빔 길이
+        const BEAM_SPEED = 30;
+        const BEAM_LENGTH = 150;
         const BEAM_COLOR = "white";
         const BEAM_WIDTH = 8;
         let wasLeftArmReadyToFire = false;
@@ -87,34 +85,40 @@
             drawLine(ctx, p[11], p[12], color, lineWidth); drawLine(ctx, p[23], p[24], color, lineWidth);
             drawLine(ctx, p[11], p[13], color, lineWidth); drawLine(ctx, p[13], p[15], color, lineWidth);
             drawLine(ctx, p[12], p[14], color, lineWidth); drawLine(ctx, p[14], p[16], color, lineWidth);
-            drawLine(ctx, p[15], p[17], color, lineWidth); drawLine(ctx, p[15], p[19], color, lineWidth);
-            drawLine(ctx, p[15], p[21], color, lineWidth); drawLine(ctx, p[16], p[18], color, lineWidth);
-            drawLine(ctx, p[16], p[20], color, lineWidth); drawLine(ctx, p[16], p[22], color, lineWidth);
+            
+            // 손 그리기 (Pose 모델이 제공하는 최대 정보)
+            drawLine(ctx, p[15], p[17], color, lineWidth); // Left Wrist to Pinky
+            drawLine(ctx, p[15], p[19], color, lineWidth); // Left Wrist to Index
+            drawLine(ctx, p[15], p[21], color, lineWidth); // Left Wrist to Thumb
+            drawLine(ctx, p[16], p[18], color, lineWidth); // Right Wrist to Pinky
+            drawLine(ctx, p[16], p[20], color, lineWidth); // Right Wrist to Index
+            drawLine(ctx, p[16], p[22], color, lineWidth); // Right Wrist to Thumb
+
             drawLine(ctx, p[23], p[25], color, lineWidth); drawLine(ctx, p[25], p[27], color, lineWidth);
             drawLine(ctx, p[24], p[26], color, lineWidth); drawLine(ctx, p[26], p[28], color, lineWidth);
         }
 
-        // [NEW] 에너지 빔 처리 함수
+        // [UPDATED] 레이저 처리 함수 (Glow 효과 추가)
         function handleBeams(ctx, width, height) {
+            ctx.save(); // 현재 그리기 상태 저장
             ctx.strokeStyle = BEAM_COLOR;
             ctx.lineWidth = BEAM_WIDTH;
+            ctx.shadowColor = BEAM_COLOR; // 빛 번짐 색상
+            ctx.shadowBlur = 15;          // 빛 번짐 강도
 
             activeBeams.forEach(beam => {
-                // 위치 업데이트
                 beam.x += beam.direction * BEAM_SPEED;
-                
-                // 빔 그리기
                 ctx.beginPath();
                 ctx.moveTo(beam.x, beam.y);
                 ctx.lineTo(beam.x + beam.direction * BEAM_LENGTH, beam.y);
                 ctx.stroke();
             });
 
-            // 화면 밖으로 나간 빔 제거
+            ctx.restore(); // 저장했던 그리기 상태 복원 (빛 번짐 효과 제거)
+
             activeBeams = activeBeams.filter(beam => {
                 const endX = beam.x + beam.direction * BEAM_LENGTH;
-                if (beam.direction === 1) return beam.x < width; // 오른쪽으로 가는 빔
-                return endX > 0; // 왼쪽으로 가는 빔
+                return (beam.direction === 1) ? beam.x < width : endX > 0;
             });
         }
 
@@ -125,7 +129,6 @@
             canvasCtx.save();
             canvasCtx.clearRect(0, 0, width, height);
             
-            // [NEW] 빔 애니메이션 처리
             handleBeams(canvasCtx, width, height);
 
             if (results.poseLandmarks) {
@@ -150,20 +153,19 @@
                 const isBodyReady = leftBodyOk || rightBodyOk;
                 const isArmReady = leftArmOk || rightArmOk;
 
-                // [NEW] 빔 발사 조건 체크
                 if (p[0] && p[11] && p[12] && p[15] && p[16]) {
                     const shoulderWidth = getDistance(p[11], p[12]);
-                    // 왼쪽 팔
-                    const isLeftArmCurrentlyReady = (lElbow < ELBOW_STRAIGHT_BAD) && (getDistance(p[15], p[0]) < shoulderWidth);
+                    const isLeftArmCurrentlyReady = (lElbow < ELBOW_STRAIGHT_BAD) && (getDistance(p[15], p[0]) < shoulderWidth * 1.2);
                     if (wasLeftArmReadyToFire && leftArmOk && leftBodyOk) {
-                        activeBeams.push({ x: p[15].x, y: p[15].y, direction: -1 }); // 왼쪽 방향
+                        // [UPDATED] 레이저 발사 위치를 어깨로 변경
+                        activeBeams.push({ x: p[11].x, y: p[11].y, direction: isFrontCamera ? -1 : 1 });
                     }
                     wasLeftArmReadyToFire = isLeftArmCurrentlyReady;
 
-                    // 오른쪽 팔
-                    const isRightArmCurrentlyReady = (rElbow < ELBOW_STRAIGHT_BAD) && (getDistance(p[16], p[0]) < shoulderWidth);
+                    const isRightArmCurrentlyReady = (rElbow < ELBOW_STRAIGHT_BAD) && (getDistance(p[16], p[0]) < shoulderWidth * 1.2);
                     if (wasRightArmReadyToFire && rightArmOk && rightBodyOk) {
-                        activeBeams.push({ x: p[16].x, y: p[16].y, direction: 1 }); // 오른쪽 방향
+                         // [UPDATED] 레이저 발사 위치를 어깨로 변경
+                        activeBeams.push({ x: p[12].x, y: p[12].y, direction: isFrontCamera ? 1 : -1 });
                     }
                     wasRightArmReadyToFire = isRightArmCurrentlyReady;
                 }
@@ -181,7 +183,7 @@
                 if (isSuccess) {
                     color = "#00FF00"; messageDiv.innerText = "SUCCESS"; messageDiv.style.borderColor = color; messageDiv.style.color = color;
                     if (!wasSuccessLastFrame && successAudio) {
-                        successAudio.currentTime = 0; // 재생 위치를 처음으로 되돌림
+                        successAudio.currentTime = 0;
                         successAudio.play().catch(e => console.error("Audio play failed:", e));
                     }
                 } else {
@@ -203,10 +205,9 @@
         async function renderFrame() { if (isRunning && !videoElement.paused && !videoElement.ended) { await pose.send({ image: videoElement }); } requestAnimationFrame(renderFrame); }
         async function initPose() { messageDiv.innerText = "LOADING MODEL..."; pose = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` }); pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 }); pose.onResults(onResults); await setupCamera(); videoElement.play(); renderFrame(); messageDiv.innerText = "READY"; }
         startOverlay.addEventListener('click', () => {
-            // [NEW] 사용자가 클릭했을 때 오디오 객체를 생성하고 로드
             if (!successAudio) {
-                successAudio = new Audio('success.mp3'); // HTML 파일과 같은 위치에 있는 success.mp3
-                successAudio.load(); // 미리 파일을 불러옴
+                successAudio = new Audio('success.mp3');
+                successAudio.load();
             }
             startOverlay.style.display = 'none';
             isRunning = true;
