@@ -53,6 +53,7 @@
             font-size: 1rem;
             font-weight: bold;
             text-transform: uppercase;
+            transition: all 0.2s; /* 색상 변경 시 부드러운 전환 효과 */
         }
         #debug {
             margin-top: 5px;
@@ -139,10 +140,8 @@
         const startOverlay = document.getElementById('start-overlay');
 
         // === [소리 설정] ===
-        // 같은 폴더에 success.mp3 파일이 있어야 합니다.
-        const successAudio = new Audio('success.mp3');
-        successAudio.loop = true; // 계속 성공 중이면 소리 반복
-        let isSoundPlaying = false;
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        let wasSuccessLastFrame = false; // 이전 프레임의 성공 여부 추적
 
         let isFrontCamera = true;
         let currentStream = null;
@@ -177,6 +176,21 @@
             if (angle > 90) angle = Math.abs(180 - angle);
             return angle;
         }
+        
+        // [NEW] 값의 진행률을 0~1로 정규화하는 함수
+        // current: 현재 값, good: 좋은 값(목표), bad: 나쁜 값(이것보다 나쁘면 0점)
+        function getNormalizedScore(current, good, bad, isAngle = false) {
+            if (isAngle) { // 각도가 클수록 좋은 경우 (e.g., 팔꿈치, 무릎)
+                if (current >= good) return 1.0;
+                if (current <= bad) return 0.0;
+                return (current - bad) / (good - bad);
+            } else { // 값이 작을수록 좋은 경우 (e.g., 기울기)
+                if (current <= good) return 1.0;
+                if (current >= bad) return 0.0;
+                return 1.0 - ((current - good) / (bad - good));
+            }
+        }
+
 
         // === [커스텀 그리기 함수: 스틱맨] ===
         function drawLine(ctx, p1, p2, color, width) {
@@ -192,27 +206,19 @@
         function drawStickFigure(ctx, p, color) {
             const lineWidth = 6; // 선 두께
 
-            // 1. 머리 (몸통과 이어지는 1자 스틱 형태)
-            // 코(0)와 어깨중심을 잇는 선
             if (p[0] && p[11] && p[12]) {
                 const shoulderMidX = (p[11].x + p[12].x) / 2;
                 const shoulderMidY = (p[11].y + p[12].y) / 2;
                 drawLine(ctx, {x: shoulderMidX, y: shoulderMidY}, p[0], color, lineWidth);
             }
-
-            // 2. 몸통 (어깨 - 엉덩이)
-            drawLine(ctx, p[11], p[12], color, lineWidth); // 어깨 선
-            drawLine(ctx, p[11], p[23], color, lineWidth); // 왼 몸통
-            drawLine(ctx, p[12], p[24], color, lineWidth); // 오른 몸통
-            drawLine(ctx, p[23], p[24], color, lineWidth); // 골반 선
-
-            // 3. 팔 (어깨 - 팔꿈치 - 손목)
+            drawLine(ctx, p[11], p[12], color, lineWidth); 
+            drawLine(ctx, p[11], p[23], color, lineWidth); 
+            drawLine(ctx, p[12], p[24], color, lineWidth); 
+            drawLine(ctx, p[23], p[24], color, lineWidth); 
             drawLine(ctx, p[11], p[13], color, lineWidth);
             drawLine(ctx, p[13], p[15], color, lineWidth);
             drawLine(ctx, p[12], p[14], color, lineWidth);
             drawLine(ctx, p[14], p[16], color, lineWidth);
-
-            // 4. 다리 (엉덩이 - 무릎 - 발목)
             drawLine(ctx, p[23], p[25], color, lineWidth);
             drawLine(ctx, p[25], p[27], color, lineWidth);
             drawLine(ctx, p[24], p[26], color, lineWidth);
@@ -233,7 +239,6 @@
             if (results.poseLandmarks) {
                 const rawLm = results.poseLandmarks;
                 const p = {};
-                // 필요한 모든 포인트 변환 (코:0 포함)
                 [0, 11,12,13,14,15,16,23,24,25,26,27,28].forEach(idx => {
                     if(rawLm[idx]) p[idx] = toPixel(rawLm[idx], width, height);
                 });
@@ -244,12 +249,18 @@
                 const ELBOW_STRAIGHT_MIN = 165; 
                 const KNEE_STRAIGHT_MIN = 170;  
 
+                // [NEW] 색상 그라데이션을 위한 '나쁜' 기준
+                const BODY_TILT_BAD = 20;
+                const ARM_HORIZON_BAD = 45;
+                const ELBOW_STRAIGHT_BAD = 130;
+                const KNEE_STRAIGHT_BAD = 140;
+
                 let isBodyReady = false;
                 let isArmReady = false;
                 let failReason = "";
+                let progressScore = 0;
 
                 if(p[11] && p[23] && p[27] && p[12] && p[24] && p[28]) {
-                    // 1. 몸 수직
                     const lTorso = calculateVerticalDeviation(p[11], p[23]);
                     const lLeg = calculateVerticalDeviation(p[23], p[27]);
                     const lKnee = calculateAngle(p[23], p[25], p[27]);
@@ -263,7 +274,6 @@
 
                     isBodyReady = leftBodyOk || rightBodyOk;
 
-                    // 2. 팔 수평
                     const lElbow = calculateAngle(p[11], p[13], p[15]);
                     const rElbow = calculateAngle(p[12], p[14], p[16]);
                     const lHorizon = calculateHorizontalDeviation(p[11], p[15]);
@@ -273,42 +283,72 @@
                     const rightArmOk = (rElbow > ELBOW_STRAIGHT_MIN) && (rHorizon < ARM_HORIZON_LIMIT);
 
                     isArmReady = leftArmOk || rightArmOk;
+                    
+                    // [NEW] 진행도 계산
+                    const lBodyScore = Math.min(
+                        getNormalizedScore(lTorso, BODY_TILT_LIMIT, BODY_TILT_BAD),
+                        getNormalizedScore(lLeg, BODY_TILT_LIMIT, BODY_TILT_BAD),
+                        getNormalizedScore(lKnee, KNEE_STRAIGHT_MIN, KNEE_STRAIGHT_BAD, true)
+                    );
+                    const lArmScore = Math.min(
+                        getNormalizedScore(lHorizon, ARM_HORIZON_LIMIT, ARM_HORIZON_BAD),
+                        getNormalizedScore(lElbow, ELBOW_STRAIGHT_MIN, ELBOW_STRAIGHT_BAD, true)
+                    );
+                    const rBodyScore = Math.min(
+                        getNormalizedScore(rTorso, BODY_TILT_LIMIT, BODY_TILT_BAD),
+                        getNormalizedScore(rLeg, BODY_TILT_LIMIT, BODY_TILT_BAD),
+                        getNormalizedScore(rKnee, KNEE_STRAIGHT_MIN, KNEE_STRAIGHT_BAD, true)
+                    );
+                    const rArmScore = Math.min(
+                        getNormalizedScore(rHorizon, ARM_HORIZON_LIMIT, ARM_HORIZON_BAD),
+                        getNormalizedScore(rElbow, ELBOW_STRAIGHT_MIN, ELBOW_STRAIGHT_BAD, true)
+                    );
+                    
+                    // 양쪽 중 더 잘된 쪽의 점수를 최종 점수로 사용
+                    const leftScore = Math.min(lBodyScore, lArmScore);
+                    const rightScore = Math.min(rBodyScore, rArmScore);
+                    progressScore = Math.max(leftScore, rightScore);
 
                     if (!isBodyReady) failReason = "BODY TILT DETECTED";
                     else if (!isArmReady) failReason = "ARM NOT HORIZONTAL";
                 }
 
                 const isSuccess = isBodyReady && isArmReady;
-                let color = "#FF0000"; // RED
+                let color;
 
                 if (isSuccess) {
                     color = "#00FF00"; // GREEN
                     messageDiv.innerText = "SUCCESS";
                     messageDiv.style.borderColor = "#00FF00";
                     messageDiv.style.color = "#00FF00";
-                    debugDiv.innerText = "PERFECT POSE";
+                    debugDiv.innerText = `POSE ACCURACY: ${(progressScore * 100).toFixed(0)}%`;
                     
-                    // 소리 재생 로직
-                    if (!isSoundPlaying) {
-                        successAudio.play().catch(e => console.log("Sound play error", e));
-                        isSoundPlaying = true;
+                    // [NEW] 소리 재생 로직: 성공 상태로 '진입'했을 때 한번만 재생
+                    if (!wasSuccessLastFrame) {
+                        new Audio('success.mp3').play().catch(e => console.error("Audio play failed:", e));
                     }
-                } else {
-                    messageDiv.innerText = failReason || "STAND STRAIGHT";
-                    messageDiv.style.borderColor = "#FF0000";
-                    messageDiv.style.color = "#FFFFFF";
-                    debugDiv.innerText = "KEEP TRYING";
 
-                    // 소리 중지 로직
-                    if (isSoundPlaying) {
-                        successAudio.pause();
-                        successAudio.currentTime = 0; // 처음으로 되감기
-                        isSoundPlaying = false;
-                    }
+                } else {
+                    // [NEW] 진행도에 따라 빨간색 -> 흰색으로 색상 변경
+                    const whiteComponent = Math.floor(255 * progressScore);
+                    color = `rgb(255, ${whiteComponent}, ${whiteComponent})`;
+                    
+                    messageDiv.innerText = failReason || "STAND STRAIGHT";
+                    messageDiv.style.borderColor = color; // 테두리 색도 같이 변경
+                    messageDiv.style.color = "#FFFFFF";
+                    debugDiv.innerText = `POSE ACCURACY: ${(progressScore * 100).toFixed(0)}%`;
                 }
+                
+                // 이전 프레임 상태 업데이트
+                wasSuccessLastFrame = isSuccess;
 
                 // 스틱맨 그리기 호출
                 drawStickFigure(canvasCtx, p, color);
+            } else {
+                 messageDiv.innerText = "NO PERSON DETECTED";
+                 messageDiv.style.borderColor = "#FF0000";
+                 messageDiv.style.color = "#FFFFFF";
+                 debugDiv.innerText = "";
             }
             canvasCtx.restore();
         }
@@ -345,15 +385,16 @@
             messageDiv.innerText = "READY";
         }
 
-        // 시작 버튼 이벤트 (소리 권한 때문에 필수)
         startOverlay.addEventListener('click', () => {
+            if (audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
             startOverlay.style.display = 'none';
             isRunning = true;
-            // 빈 소리를 한번 재생해서 오디오 권한 획득
-            successAudio.play().then(() => {
-                successAudio.pause();
-                successAudio.currentTime = 0;
-            }).catch(() => {});
+            
+            // 더미 사운드를 재생하여 오디오 컨텍스트를 활성화
+            const dummySound = new Audio();
+            dummySound.play().catch(() => {});
             
             initPose();
         });
