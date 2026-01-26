@@ -136,11 +136,10 @@
         successAudioBase.load();
         
         const pullingAudioBase = new Audio('pulling.mp3'); 
-        pullingAudioBase.volume = 0.75; // 75%로 설정
+        pullingAudioBase.volume = 0.6; // 75% → 60%로 낮춤
         pullingAudioBase.load();
 
         let lastSuccessState = false; // 이전 프레임의 성공 상태 추적
-        let lastVibrationState = false; // 이전 진동 상태 (초록색 여부)
         let isFrontCamera = true;
         let currentStream = null;
         let pose = null;
@@ -379,23 +378,8 @@
 
         function playPullingSound() {
             const sound = pullingAudioBase.cloneNode();
-            sound.volume = 0.75;
+            sound.volume = 0.6;
             sound.play().catch(e => console.log("Pulling audio play failed:", e));
-        }
-
-        // 짧은 진동 (50ms로 증가, 디버깅 로그 추가)
-        function triggerVibration() {
-            console.log("🔔 Vibration triggered!");
-            if ('vibrate' in navigator) {
-                try {
-                    const success = navigator.vibrate(50); // 30ms → 50ms로 증가
-                    console.log("Vibration result:", success);
-                } catch (e) {
-                    console.error("Vibration error:", e);
-                }
-            } else {
-                console.log("Vibration API not supported");
-            }
         }
 
         function onPoseResults(results) {
@@ -472,7 +456,6 @@
                         playSuccessSound();
                     }
                     lastSuccessState = true;
-                    lastVibrationState = true; // 초록색 상태 기록
 
                     // 어깨-팔꿈치 선의 길이 짧아짐 감지
                     let currentArmLength = 0;
@@ -512,12 +495,6 @@
                 } else {
                     messageDiv.innerText = failReason || "CHECK POSTURE";
                     
-                    // 초록색(성공)에서 흰색/빨강(실패)으로 전환 시 진동
-                    if (lastVibrationState) {
-                        triggerVibration(); // 초록색 → 흰색/빨강 전환 시 진동!
-                        console.log("🟢→⚪ State change detected - vibrating");
-                    }
-                    
                     // 실시간 각도 정보 표시
                     if (p[11] && p[12] && p[13] && p[14] && p[15] && p[16]) {
                         const lHorizon = calculateHorizontalDeviation(p[11], p[15]);
@@ -530,7 +507,6 @@
                     }
 
                     lastSuccessState = false;
-                    lastVibrationState = false; // 초록색 아님 → 진동 상태 리셋
                     prevArmLength = 0;
                 }
 
@@ -585,12 +561,6 @@
         startOverlay.addEventListener('click', () => {
             startOverlay.style.display = 'none';
             isRunning = true;
-            
-            // 진동 테스트 (권한 획득)
-            if ('vibrate' in navigator) {
-                navigator.vibrate(50);
-                console.log("Initial vibration test");
-            }
             
             // 모바일 브라우저 등의 정책을 우회하기 위해 빈 소리 재생 시도
             successAudioBase.play().then(()=>successAudioBase.pause()).catch(()=>{});
