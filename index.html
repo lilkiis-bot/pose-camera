@@ -212,8 +212,8 @@
 
         // 자세 점수 계산 (0~1)
         function calculatePostureScore(lHorizon, rHorizon, lElbowAngle, rElbowAngle) {
-            const ARM_HORIZON_LIMIT = 15;    // 수평 허용 각도
-            const ELBOW_STRAIGHT_MIN = 165;  // 팔꿈치 펴짐 최소 각도
+            const ARM_HORIZON_LIMIT = 18;    // 수평 허용 각도 (15 → 18)
+            const ELBOW_STRAIGHT_MIN = 162;  // 팔꿈치 펴짐 최소 각도 (165 → 162)
             
             const isLeftStraight = (lHorizon < ARM_HORIZON_LIMIT) && (lElbowAngle > ELBOW_STRAIGHT_MIN);
             const isRightStraight = (rHorizon < ARM_HORIZON_LIMIT) && (rElbowAngle > ELBOW_STRAIGHT_MIN);
@@ -225,27 +225,30 @@
                 // 얼마나 수평에 가까운지
                 const horizonScore = Math.max(0, 1 - lHorizon / ARM_HORIZON_LIMIT);
                 // 얼마나 쭉 펴졌는지
-                const straightScore = Math.max(0, (lElbowAngle - ELBOW_STRAIGHT_MIN) / 15);
+                const straightScore = Math.max(0, (lElbowAngle - ELBOW_STRAIGHT_MIN) / 18);
                 score = (horizonScore * 0.5 + straightScore * 0.5);
             } else if (isRightStraight && !isLeftStraight) {
                 // 오른팔만 수평으로 펴짐 - 완벽
                 const horizonScore = Math.max(0, 1 - rHorizon / ARM_HORIZON_LIMIT);
-                const straightScore = Math.max(0, (rElbowAngle - ELBOW_STRAIGHT_MIN) / 15);
+                const straightScore = Math.max(0, (rElbowAngle - ELBOW_STRAIGHT_MIN) / 18);
                 score = (horizonScore * 0.5 + straightScore * 0.5);
             } else if (isLeftStraight && isRightStraight) {
                 // 둘 다 펴짐 - 중간 점수 (한쪽만 펴야 함)
                 score = 0.5;
             } else {
-                // 둘 다 안 펴짐 - 얼마나 가까운지 점수화
-                const leftProgress = Math.max(0, 
-                    (1 - lHorizon / 45) * 0.5 + 
-                    (lElbowAngle / 180) * 0.5
-                );
-                const rightProgress = Math.max(0,
-                    (1 - rHorizon / 45) * 0.5 + 
-                    (rElbowAngle / 180) * 0.5
-                );
-                score = Math.max(leftProgress, rightProgress) * 0.4;
+                // 둘 다 안 펴짐 - 팔을 들고 펴는 정도를 부드럽게 점수화
+                // 왼팔 진행도
+                const leftHorizonProgress = Math.max(0, Math.min(1, 1 - lHorizon / 60)); // 60도 범위에서 부드럽게
+                const leftStraightProgress = Math.max(0, Math.min(1, lElbowAngle / 180)); // 펴지는 정도
+                const leftScore = (leftHorizonProgress * 0.6 + leftStraightProgress * 0.4);
+                
+                // 오른팔 진행도
+                const rightHorizonProgress = Math.max(0, Math.min(1, 1 - rHorizon / 60));
+                const rightStraightProgress = Math.max(0, Math.min(1, rElbowAngle / 180));
+                const rightScore = (rightHorizonProgress * 0.6 + rightStraightProgress * 0.4);
+                
+                // 둘 중 높은 쪽 선택 (더 잘하는 팔 기준)
+                score = Math.max(leftScore, rightScore) * 0.6; // 최대 60%까지만
             }
             
             return Math.min(1, Math.max(0, score));
@@ -256,12 +259,12 @@
             if (score >= 0.7) {
                 // 0.7 이상: 초록색 (그라데이션 없이 바로)
                 return "#00FF00";
-            } else if (score >= 0.3) {
-                // 0.3~0.7: 빨강 -> 흰색 그라데이션
-                const factor = (score - 0.3) / 0.4;
+            } else if (score >= 0.15) {
+                // 0.15~0.7: 빨강 -> 흰색 그라데이션 (더 넓은 범위)
+                const factor = (score - 0.15) / 0.55;
                 return interpolateColor("#FF0000", "#FFFFFF", factor);
             } else {
-                // 0~0.3: 빨강
+                // 0~0.15: 빨강
                 return "#FF0000";
             }
         }
@@ -388,8 +391,8 @@
                     if(rawLm[idx]) p[idx] = toPixel(rawLm[idx], width, height);
                 });
 
-                const ARM_HORIZON_LIMIT = 15;    
-                const ELBOW_STRAIGHT_MIN = 165;  
+                const ARM_HORIZON_LIMIT = 18;    
+                const ELBOW_STRAIGHT_MIN = 162;  
 
                 let isSuccess = false;
                 let failReason = "";
