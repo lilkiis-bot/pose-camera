@@ -3,22 +3,100 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Stickman Pose & Hand Audio</title>
+    <title>Shoulder-Elbow Shortening Sound</title>
     <style>
-        body { margin: 0; padding: 0; background-color: #000; overflow: hidden; display: flex; justify-content: center; align-items: center; font-family: 'Courier New', Courier, monospace; }
-        .container { position: relative; width: 100vw; height: 100vh; }
-        video, canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: cover; }
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #000;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: 'Courier New', Courier, monospace;
+        }
+        .container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+        video, canvas {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
         .mirror { transform: scaleX(-1); }
         .normal { transform: scaleX(1); }
+        
         video { z-index: 1; }
         canvas { z-index: 2; }
-        #status-box { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); z-index: 3; width: 90%; text-align: center; pointer-events: none; }
-        #message { background: rgba(0, 0, 0, 0.9); color: white; padding: 15px; border: 2px solid #FF0000; font-size: 1rem; font-weight: bold; text-transform: uppercase; transition: all 0.2s; }
-        #debug { margin-top: 5px; font-size: 0.8rem; color: #ccc; background: black; display: inline-block; padding: 2px 5px; }
-        #switch-btn { position: absolute; bottom: 30px; right: 20px; z-index: 4; background-color: #333; color: white; border: 2px solid white; padding: 15px 20px; font-family: inherit; font-weight: bold; font-size: 1rem; cursor: pointer; }
-        #switch-btn:active { background-color: white; color: black; }
-        #start-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 10; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; cursor: pointer; }
-        #start-btn { border: 2px solid #00FF00; padding: 20px; margin-top: 20px; font-size: 1.5rem; color: #00FF00; }
+
+        /* UI 스타일 */
+        #status-box {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 3;
+            width: 90%;
+            text-align: center;
+            pointer-events: none;
+        }
+        #message {
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 15px;
+            border: 2px solid #FF0000;
+            font-size: 1.2rem;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+        #debug {
+            margin-top: 5px;
+            font-size: 0.9rem;
+            color: #00FF00;
+            background: rgba(0,0,0,0.7);
+            display: inline-block;
+            padding: 5px 10px;
+        }
+
+        #switch-btn {
+            position: absolute;
+            bottom: 30px;
+            right: 20px;
+            z-index: 4;
+            background-color: #333;
+            color: white;
+            border: 2px solid white;
+            padding: 15px 20px;
+            font-family: inherit;
+            font-weight: bold;
+            font-size: 1rem;
+            cursor: pointer;
+        }
+
+        #start-overlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.95);
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            cursor: pointer;
+        }
+        #start-btn {
+            border: 2px solid #00FF00;
+            padding: 20px;
+            margin-top: 20px;
+            font-size: 1.5rem;
+            color: #00FF00;
+        }
     </style>
     <!-- MediaPipe -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -31,14 +109,17 @@
     <div class="container">
         <video id="input_video" class="mirror" playsinline autoplay muted></video>
         <canvas id="output_canvas" class="mirror"></canvas>
+        
         <div id="status-box">
-            <div id="message">WAITING FOR CAMERA...</div>
+            <div id="message">WAITING...</div>
             <div id="debug"></div>
         </div>
+
         <button id="switch-btn">CAM SWITCH</button>
+
         <div id="start-overlay">
-            <div>TOUCH TO START</div>
-            <div id="start-btn">START</div>
+            <div style="text-align:center">UPLOAD 'pulling.mp3' & 'success.mp3'<br>BEFORE START</div>
+            <div id="start-btn">TOUCH TO START</div>
         </div>
     </div>
 
@@ -50,209 +131,454 @@
         const debugDiv = document.getElementById('debug');
         const switchBtn = document.getElementById('switch-btn');
         const startOverlay = document.getElementById('start-overlay');
-        const drawingUtils = window;
 
-        // 오디오 및 모델 객체
-        let successAudio, pullingAudio, shootAudio;
-        let pose = null, hands = null;
+        // 오디오 객체 설정
+        const successAudioBase = new Audio('success.mp3');
+        successAudioBase.load();
+        
+        const pullingAudioBase = new Audio('pulling.mp3'); 
+        pullingAudioBase.volume = 0.75; // 75%로 설정
+        pullingAudioBase.load();
 
-        // [RESTRUCTURED] 상태 변수들
-        let isRunning = false;
+        let lastSuccessState = false; // 이전 프레임의 성공 상태 추적
         let isFrontCamera = true;
-        let lastPoseResults = null; // Pose 결과를 저장할 변수
-        let lastHandResults = null; // Hands 결과를 저장할 변수
-        let lastFrameState = {
-            isSuccess: false,
-            prevLeftElbowPos: null, prevRightElbowPos: null,
-            wasLeftFist: false, wasRightFist: false
-        };
+        let currentStream = null;
+        let pose = null;
+        let hands = null;
+        let isRunning = false;
 
-        // 상수
-        const ELBOW_MOVE_THRESHOLD = 3; // px
-        const ELBOW_BENT_ANGLE = 130;
+        // 로직 변수
+        let prevArmLength = 0; // 어깨-팔꿈치 거리
+        let lastPullTime = 0;
 
-        // 유틸리티 함수
-        function toPixel(landmark, width, height) { return landmark ? { x: landmark.x * width, y: landmark.y * height, visibility: landmark.visibility } : null; }
-        function calculateAngle(a, b, c) { if (!a || !b || !c) return 0; const rad = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x); let angle = Math.abs(rad * 180.0 / Math.PI); return angle > 180.0 ? 360 - angle : angle; }
-        function getDistance(p1, p2) { if (!p1 || !p2) return Infinity; return Math.hypot(p1.x - p2.x, p1.y - p2.y); }
-        function getNormalizedScore(current, good, bad, isAngle = false) { if (isAngle) { if (current >= good) return 1.0; if (current <= bad) return 0.0; return (current - bad) / (good - bad); } else { if (current <= good) return 1.0; if (current >= bad) return 0.0; return 1.0 - ((current - good) / (bad - good)); } }
-        
-        // [IMPROVED] 팔꿈치 위치 판별 함수 (좌우 분리)
-        function isElbowOutside(elbow, shoulder, hip, side) {
-            if (!elbow || !shoulder || !hip) return false;
-            if (side === 'left') { // 왼쪽 팔: 팔꿈치가 어깨/골반보다 x좌표가 커야 함
-                return elbow.x > shoulder.x && elbow.x > hip.x;
-            } else { // 오른쪽 팔: 팔꿈치가 어깨/골반보다 x좌표가 작아야 함
-                return elbow.x < shoulder.x && elbow.x < hip.x;
-            }
+        // 손 landmark 저장
+        let leftHandLandmarks = null;
+        let rightHandLandmarks = null;
+
+        function toPixel(landmark, width, height) {
+            return { x: landmark.x * width, y: landmark.y * height };
+        }
+
+        // 두 점 사이 거리
+        function getDistance(p1, p2) {
+            return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+        }
+
+        function calculateAngle(a, b, c) {
+            const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+            let angle = Math.abs(radians * 180.0 / Math.PI);
+            if (angle > 180.0) angle = 360 - angle;
+            return angle;
         }
         
-        // 주먹 인식 함수
-        function isFist(handLandmarks) {
-            if(!handLandmarks) return false;
-            const fingerTips = [handLandmarks[8], handLandmarks[12], handLandmarks[16], handLandmarks[20]];
-            const palmCenter = { x: (handLandmarks[5].x + handLandmarks[17].x) / 2, y: (handLandmarks[5].y + handLandmarks[17].y) / 2 };
-            const baseDist = getDistance(handLandmarks[4], handLandmarks[5]);
-            for (const tip of fingerTips) { if (getDistance(tip, palmCenter) > baseDist) return false; }
-            return true;
+        function calculateHorizontalDeviation(a, b) {
+            const dy = b.y - a.y;
+            const dx = b.x - a.x;
+            let angle = Math.abs(Math.atan2(dy, dx) * 180.0 / Math.PI);
+            if (angle > 90) angle = Math.abs(180 - angle);
+            return angle;
         }
 
-        // 슛 동작 인식 함수
-        function isShootPose(handLandmarks) {
-            if(!handLandmarks) return false;
-            const wrist = handLandmarks[0], indexTip = handLandmarks[8], middleTip = handLandmarks[12], ringTip = handLandmarks[16], pinkyTip = handLandmarks[20], indexPip = handLandmarks[6];
-            const baseDist = getDistance(wrist, indexPip);
-            return getDistance(wrist, indexTip) > baseDist * 2.5 && getDistance(wrist, middleTip) > baseDist * 2.5 && getDistance(wrist, ringTip) < baseDist * 2.2 && getDistance(wrist, pinkyTip) < baseDist * 2.0;
+        // 선 그리기
+        function drawLine(ctx, p1, p2, color, width) {
+            if (!p1 || !p2) return;
+            ctx.beginPath();
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = width;
+            ctx.stroke();
         }
 
-        // 그리기 함수
-        function drawLine(ctx, p1, p2, color, width) { if (!p1 || !p2 || p1.visibility < 0.5 || p2.visibility < 0.5) return; ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.strokeStyle = color; ctx.lineWidth = width; ctx.stroke(); }
-        function drawStickFigure(ctx, p, color) { /* ... 기존과 동일 (축약) ... */ if (!p) return; const lineWidth = 6; const shoulderMid = p[11] && p[12] ? { x: (p[11].x + p[12].x) / 2, y: (p[11].y + p[12].y) / 2, visibility: (p[11].visibility + p[12].visibility) / 2 } : null; const hipMid = p[23] && p[24] ? { x: (p[23].x + p[24].x) / 2, y: (p[23].y + p[24].y) / 2, visibility: (p[23].visibility + p[24].visibility) / 2 } : null; drawLine(ctx, shoulderMid, hipMid, color, lineWidth); if (p[0]) drawLine(ctx, shoulderMid, p[0], color, lineWidth); drawLine(ctx, p[11], p[12], color, lineWidth); drawLine(ctx, p[23], p[24], color, lineWidth); drawLine(ctx, p[11], p[13], color, lineWidth); drawLine(ctx, p[13], p[15], color, lineWidth); drawLine(ctx, p[12], p[14], color, lineWidth); drawLine(ctx, p[14], p[16], color, lineWidth); drawLine(ctx, p[23], p[25], color, lineWidth); drawLine(ctx, p[25], p[27], color, lineWidth); drawLine(ctx, p[24], p[26], color, lineWidth); drawLine(ctx, p[26], p[28], color, lineWidth); }
-        function drawHands(ctx, handLandmarks, color) { if (!handLandmarks) return; drawingUtils.drawConnectors(ctx, handLandmarks, window.HAND_CONNECTIONS, {color: color, lineWidth: 4}); drawingUtils.drawLandmarks(ctx, handLandmarks, {color: color, lineWidth: -1, radius: 4}); }
+        // 점 그리기
+        function drawPoint(ctx, p, color, radius) {
+            if (!p) return;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, radius, 0, 2 * Math.PI);
+            ctx.fillStyle = color;
+            ctx.fill();
+        }
 
-        // [FIX] 모델 결과 콜백: 데이터 저장만 수행
-        function onPoseResults(results) { lastPoseResults = results; }
-        function onHandResults(results) { lastHandResults = results; }
+        // RGB 색상 보간
+        function interpolateColor(color1, color2, factor) {
+            const r1 = parseInt(color1.slice(1, 3), 16);
+            const g1 = parseInt(color1.slice(3, 5), 16);
+            const b1 = parseInt(color1.slice(5, 7), 16);
+            
+            const r2 = parseInt(color2.slice(1, 3), 16);
+            const g2 = parseInt(color2.slice(3, 5), 16);
+            const b2 = parseInt(color2.slice(5, 7), 16);
+            
+            const r = Math.round(r1 + (r2 - r1) * factor);
+            const g = Math.round(g1 + (g2 - g1) * factor);
+            const b = Math.round(b1 + (b2 - b1) * factor);
+            
+            return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+        }
 
-        // [RESTRUCTURED] 모든 로직을 처리하는 메인 함수
-        function processAndDraw() {
-            // 두 모델의 결과가 모두 준비되었는지 확인
-            if (!lastPoseResults || !lastPoseResults.poseLandmarks || !lastHandResults) {
-                canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-                messageDiv.innerText = "DETECTING...";
-                return; // 데이터가 없으면 아무것도 하지 않음
+        // 자세 점수 계산 (0~1)
+        function calculatePostureScore(lHorizon, rHorizon, lElbowAngle, rElbowAngle) {
+            const ARM_HORIZON_LIMIT = 15;
+            const ELBOW_STRAIGHT_MIN = 165;
+            
+            // 한쪽 팔은 펴지고, 다른쪽은 굽혀져야 함
+            const isLeftStraight = (lHorizon < ARM_HORIZON_LIMIT) && (lElbowAngle > ELBOW_STRAIGHT_MIN);
+            const isRightStraight = (rHorizon < ARM_HORIZON_LIMIT) && (rElbowAngle > ELBOW_STRAIGHT_MIN);
+            
+            if (isLeftStraight && !isRightStraight) {
+                // 왼팔이 펴진 상태 - 오른팔 굽힘 정도 평가
+                const horizonScore = Math.max(0, 1 - rHorizon / 90);
+                const elbowScore = Math.max(0, 1 - rElbowAngle / 180);
+                return (horizonScore + elbowScore) / 2;
+            } else if (isRightStraight && !isLeftStraight) {
+                // 오른팔이 펴진 상태 - 왼팔 굽힘 정도 평가
+                const horizonScore = Math.max(0, 1 - lHorizon / 90);
+                const elbowScore = Math.max(0, 1 - lElbowAngle / 180);
+                return (horizonScore + elbowScore) / 2;
+            } else {
+                // 둘 다 펴졌거나 둘 다 굽힘 - 낮은 점수
+                return 0;
+            }
+        }
+
+        // 점수에 따른 색상 반환
+        function getColorByScore(score) {
+            if (score >= 0.8) {
+                return "#00FF00"; // 초록색 (완벽)
+            } else if (score >= 0.4) {
+                // 빨강 -> 흰색 보간
+                const factor = (score - 0.4) / 0.4;
+                return interpolateColor("#FF0000", "#FFFFFF", factor);
+            } else {
+                return "#FF0000"; // 빨강 (부족)
+            }
+        }
+
+        // 간소화된 스틱맨 그리기 (세로 일직선 몸통)
+        function drawStickFigure(ctx, p, mainColor, activeArm, isPulling) {
+            const lineWidth = 6;
+            
+            let leftArmColor = mainColor;
+            let rightArmColor = mainColor;
+
+            // 당기는 중일 때 해당 팔 노란색
+            if (isPulling) {
+                if (activeArm === 1) leftArmColor = "#FFFF00"; 
+                if (activeArm === 2) rightArmColor = "#FFFF00"; 
             }
 
-            const width = videoElement.videoWidth, height = videoElement.videoHeight;
+            // 머리
+            if (p[0] && p[11] && p[12]) {
+                const midShoulder = {x: (p[11].x + p[12].x) / 2, y: (p[11].y + p[12].y) / 2};
+                drawLine(ctx, midShoulder, p[0], mainColor, lineWidth);
+                // 머리 원
+                drawPoint(ctx, p[0], mainColor, 15);
+            }
+
+            // 몸통 세로 일직선 (어깨 중점 -> 골반 중점)
+            if (p[11] && p[12] && p[23] && p[24]) {
+                const midShoulder = {x: (p[11].x + p[12].x) / 2, y: (p[11].y + p[12].y) / 2};
+                const midHip = {x: (p[23].x + p[24].x) / 2, y: (p[23].y + p[24].y) / 2};
+                drawLine(ctx, midShoulder, midHip, mainColor, lineWidth);
+                
+                // 어깨 가로선
+                drawLine(ctx, p[11], p[12], mainColor, lineWidth);
+                // 골반 가로선
+                drawLine(ctx, p[23], p[24], mainColor, lineWidth);
+            }
+
+            // 왼팔
+            if (p[11] && p[13] && p[15]) {
+                drawLine(ctx, p[11], p[13], leftArmColor, lineWidth);
+                drawLine(ctx, p[13], p[15], leftArmColor, lineWidth);
+            }
+            // 오른팔
+            if (p[12] && p[14] && p[16]) {
+                drawLine(ctx, p[12], p[14], rightArmColor, lineWidth);
+                drawLine(ctx, p[14], p[16], rightArmColor, lineWidth);
+            }
+
+            // 왼다리
+            if (p[23] && p[25] && p[27]) {
+                drawLine(ctx, p[23], p[25], mainColor, lineWidth);
+                drawLine(ctx, p[25], p[27], mainColor, lineWidth);
+            }
+            // 오른다리
+            if (p[24] && p[26] && p[28]) {
+                drawLine(ctx, p[24], p[26], mainColor, lineWidth);
+                drawLine(ctx, p[26], p[28], mainColor, lineWidth);
+            }
+        }
+
+        // 손가락 그리기
+        function drawHand(ctx, handLandmarks, color, width, height) {
+            if (!handLandmarks) return;
+            
+            const points = handLandmarks.map(lm => toPixel(lm, width, height));
+            const lineWidth = 3;
+            const pointRadius = 4;
+
+            // 손가락 연결선 정의 (MediaPipe Hands landmark 구조)
+            const fingerConnections = [
+                // 엄지
+                [0, 1], [1, 2], [2, 3], [3, 4],
+                // 검지
+                [0, 5], [5, 6], [6, 7], [7, 8],
+                // 중지
+                [0, 9], [9, 10], [10, 11], [11, 12],
+                // 약지
+                [0, 13], [13, 14], [14, 15], [15, 16],
+                // 소지
+                [0, 17], [17, 18], [18, 19], [19, 20],
+                // 손바닥
+                [5, 9], [9, 13], [13, 17]
+            ];
+
+            // 선 그리기
+            fingerConnections.forEach(([i, j]) => {
+                drawLine(ctx, points[i], points[j], color, lineWidth);
+            });
+
+            // 관절 포인트 그리기
+            points.forEach(p => {
+                drawPoint(ctx, p, color, pointRadius);
+            });
+        }
+
+        function playSuccessSound() {
+            const sound = successAudioBase.cloneNode();
+            sound.volume = 1.0;
+            sound.play().catch(e => console.log("Success audio play failed:", e));
+        }
+
+        function playPullingSound() {
+            const sound = pullingAudioBase.cloneNode();
+            sound.volume = 0.75;
+            sound.play().catch(e => console.log("Pulling audio play failed:", e));
+        }
+
+        function onPoseResults(results) {
+            if (!isRunning) return;
+
+            const width = videoElement.videoWidth;
+            const height = videoElement.videoHeight;
+            canvasElement.width = width;
+            canvasElement.height = height;
+
             canvasCtx.save();
             canvasCtx.clearRect(0, 0, width, height);
 
-            // Pose 랜드마크를 화면 좌표로 변환
-            const p = {};
-            lastPoseResults.poseLandmarks.forEach((lm, idx) => p[idx] = toPixel(lm, width, height));
+            if (results.poseLandmarks) {
+                const rawLm = results.poseLandmarks;
+                const p = {};
+                // 필요한 포인트들 확장
+                [0, 11,12,13,14,15,16,23,24,25,26,27,28].forEach(idx => {
+                    if(rawLm[idx]) p[idx] = toPixel(rawLm[idx], width, height);
+                });
 
-            // T-자세 정확도 및 그라데이션 계산
-            const BODY_TILT_LIMIT = 5, ARM_HORIZON_LIMIT = 15, ELBOW_STRAIGHT_MIN = 165;
-            const BODY_TILT_BAD = 20, ARM_HORIZON_BAD = 45, ELBOW_STRAIGHT_BAD = 130;
-            const lElbow = calculateAngle(p[11], p[13], p[15]);
-            const rElbow = calculateAngle(p[12], p[14], p[16]);
-            const lArmS = getNormalizedScore(lElbow, ELBOW_STRAIGHT_MIN, ELBOW_STRAIGHT_BAD, true);
-            const rArmS = getNormalizedScore(rElbow, ELBOW_STRAIGHT_MIN, ELBOW_STRAIGHT_BAD, true);
-            const progressScore = Math.max(lArmS, rArmS);
-            const isSuccess = (lElbow > ELBOW_STRAIGHT_MIN) || (rElbow > ELBOW_STRAIGHT_MIN);
+                const ARM_HORIZON_LIMIT = 15;    
+                const ELBOW_STRAIGHT_MIN = 165;  
 
-            // 손 모양 인식
-            let leftHand, rightHand;
-            if (lastHandResults.multiHandLandmarks) {
-                for (let i = 0; i < lastHandResults.multiHandLandmarks.length; i++) {
-                    const handedness = lastHandResults.multiHandedness[i].label;
-                    if (handedness === 'Left') leftHand = lastHandResults.multiHandLandmarks[i];
-                    else if (handedness === 'Right') rightHand = lastHandResults.multiHandLandmarks[i];
+                let isSuccess = false;
+                let failReason = "";
+                let activeArm = 0; // 1:왼쪽, 2:오른쪽
+                let isPulling = false; 
+                let postureScore = 0;
+
+                if(p[11] && p[12] && p[13] && p[14] && p[15] && p[16] && p[23] && p[24]) {
+                    
+                    const lHorizon = calculateHorizontalDeviation(p[11], p[15]);
+                    const rHorizon = calculateHorizontalDeviation(p[12], p[16]);
+                    const lElbowAngle = calculateAngle(p[11], p[13], p[15]);
+                    const rElbowAngle = calculateAngle(p[12], p[14], p[16]);
+
+                    const isLeftStraight = (lHorizon < ARM_HORIZON_LIMIT) && (lElbowAngle > ELBOW_STRAIGHT_MIN);
+                    const isRightStraight = (rHorizon < ARM_HORIZON_LIMIT) && (rElbowAngle > ELBOW_STRAIGHT_MIN);
+
+                    // 자세 점수 계산
+                    postureScore = calculatePostureScore(lHorizon, rHorizon, lElbowAngle, rElbowAngle);
+
+                    if (isLeftStraight && !isRightStraight) {
+                        isSuccess = true;
+                        activeArm = 2; // 오른팔이 굽은(동작) 팔
+                    } else if (isRightStraight && !isLeftStraight) {
+                        isSuccess = true;
+                        activeArm = 1; // 왼팔이 굽은(동작) 팔
+                    } else if (isLeftStraight && isRightStraight) {
+                        failReason = "BEND ONE ARM";
+                    } else {
+                        failReason = "RAISE ONE ARM";
+                    }
+                }
+
+                // 점수에 따른 색상
+                let color = getColorByScore(postureScore);
+
+                if (isSuccess) {
+                    messageDiv.innerText = "PULL BACK!";
+                    messageDiv.style.borderColor = "#00FF00";
+                    messageDiv.style.color = "#00FF00";
+                    
+                    // 이전에 실패 상태였다가 성공 상태로 바뀌었을 때만 success 사운드 재생
+                    if (!lastSuccessState) {
+                        playSuccessSound();
+                    }
+                    lastSuccessState = true;
+
+                    // 어깨-팔꿈치 선의 길이 짧아짐 감지
+                    let currentArmLength = 0;
+                    
+                    if (activeArm === 1) {
+                        currentArmLength = getDistance(p[11], p[13]);
+                    } else if (activeArm === 2) {
+                        currentArmLength = getDistance(p[12], p[14]);
+                    }
+
+                    if (prevArmLength > 0) {
+                        const diff = prevArmLength - currentArmLength;
+
+                        if (diff > 0.3) {
+                            isPulling = true;
+                            
+                            const now = Date.now();
+                            let delay = Math.max(50, 400 - (diff * 100)); 
+
+                            if (now - lastPullTime > delay) {
+                                playPullingSound();
+                                lastPullTime = now;
+                            }
+                            debugDiv.innerText = `SHORTENING: ${diff.toFixed(2)}`;
+                        } else if (diff < -0.3) {
+                            debugDiv.innerText = "EXTENDING...";
+                        } else {
+                            debugDiv.innerText = "HOLDING...";
+                        }
+                    } else {
+                        debugDiv.innerText = "READY";
+                    }
+
+                    prevArmLength = currentArmLength;
+
+                } else {
+                    messageDiv.innerText = failReason || "CHECK POSTURE";
+                    messageDiv.style.borderColor = color;
+                    messageDiv.style.color = "#FFFFFF";
+                    debugDiv.innerText = `SCORE: ${(postureScore * 100).toFixed(0)}%`;
+
+                    lastSuccessState = false;
+                    prevArmLength = 0;
+                }
+
+                drawStickFigure(canvasCtx, p, color, activeArm, isPulling);
+
+                // 손 그리기
+                if (leftHandLandmarks) {
+                    drawHand(canvasCtx, leftHandLandmarks, color, width, height);
+                }
+                if (rightHandLandmarks) {
+                    drawHand(canvasCtx, rightHandLandmarks, color, width, height);
                 }
             }
-            const isLeftFist = isFist(leftHand);
-            const isRightFist = isFist(rightHand);
-            const isLeftShoot = isShootPose(leftHand);
-            const isRightShoot = isShootPose(rightHand);
-            
-            // Pulling 소리 로직
-            if (isLeftFist && lElbow < ELBOW_BENT_ANGLE && isElbowOutside(p[13], p[11], p[23], 'left') && lastFrameState.prevLeftElbowPos) {
-                if (getDistance(p[13], lastFrameState.prevLeftElbowPos) > ELBOW_MOVE_THRESHOLD) {
-                    if (pullingAudio && pullingAudio.paused) pullingAudio.play().catch(e => {});
-                }
-            }
-            if (isRightFist && rElbow < ELBOW_BENT_ANGLE && isElbowOutside(p[14], p[12], p[24], 'right') && lastFrameState.prevRightElbowPos) {
-                if (getDistance(p[14], lastFrameState.prevRightElbowPos) > ELBOW_MOVE_THRESHOLD) {
-                    if (pullingAudio && pullingAudio.paused) pullingAudio.play().catch(e => {});
-                }
-            }
-
-            // Shoot 소리 로직
-            const faceProximity = getDistance(p[11], p[12]);
-            if (lastFrameState.wasLeftFist && isLeftShoot && getDistance(p[15], p[0]) < faceProximity) {
-                if (shootAudio) { shootAudio.currentTime = 0; shootAudio.play().catch(e => {}); }
-            }
-            if (lastFrameState.wasRightFist && isRightShoot && getDistance(p[16], p[0]) < faceProximity) {
-                if (shootAudio) { shootAudio.currentTime = 0; shootAudio.play().catch(e => {}); }
-            }
-
-            // 그리기 및 UI 업데이트
-            let color;
-            if (isSuccess) {
-                color = "#00FF00"; messageDiv.innerText = "SUCCESS";
-                if (!lastFrameState.isSuccess && successAudio) {
-                    successAudio.currentTime = 0; successAudio.play().catch(e => {});
-                }
-            } else {
-                const white = Math.floor(255 * progressScore); color = `rgb(255, ${white}, ${white})`;
-                messageDiv.innerText = "STAND STRAIGHT";
-            }
-            messageDiv.style.borderColor = color; messageDiv.style.color = isSuccess ? color : "#FFFFFF";
-            debugDiv.innerText = `POSE ACCURACY: ${(progressScore * 100).toFixed(0)}%`;
-            
-            drawStickFigure(canvasCtx, p, color);
-            drawHands(canvasCtx, leftHand, color);
-            drawHands(canvasCtx, rightHand, color);
-
-            // 상태 업데이트
-            lastFrameState.isSuccess = isSuccess;
-            lastFrameState.prevLeftElbowPos = p[13]; lastFrameState.prevRightElbowPos = p[14];
-            lastFrameState.wasLeftFist = isLeftFist; lastFrameState.wasRightFist = isRightFist;
-
             canvasCtx.restore();
         }
 
-        // 메인 애니메이션 루프
+        function onHandsResults(results) {
+            if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+                leftHandLandmarks = null;
+                rightHandLandmarks = null;
+                return;
+            }
+
+            // 왼손/오른손 분류
+            leftHandLandmarks = null;
+            rightHandLandmarks = null;
+
+            results.multiHandLandmarks.forEach((landmarks, index) => {
+                if (results.multiHandedness && results.multiHandedness[index]) {
+                    const label = results.multiHandedness[index].label; // "Left" or "Right"
+                    if (label === "Left") {
+                        leftHandLandmarks = landmarks;
+                    } else {
+                        rightHandLandmarks = landmarks;
+                    }
+                }
+            });
+        }
+
+        async function setupCamera() {
+            if (currentStream) currentStream.getTracks().forEach(track => track.stop());
+            const constraints = {
+                video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: isFrontCamera ? 'user' : 'environment' },
+                audio: false
+            };
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                currentStream = stream;
+                videoElement.srcObject = stream;
+                if (isFrontCamera) { videoElement.className = 'mirror'; canvasElement.className = 'mirror'; } 
+                else { videoElement.className = 'normal'; canvasElement.className = 'normal'; }
+                return new Promise((resolve) => { videoElement.onloadedmetadata = () => { resolve(videoElement); }; });
+            } catch (err) { alert("Camera Error: " + err.message); }
+        }
+
         async function renderFrame() {
-            if (isRunning && !videoElement.paused && !videoElement.ended) {
-                // 두 모델에 동시에 이미지 전송 요청
-                await Promise.all([
-                    pose.send({ image: videoElement }),
-                    hands.send({ image: videoElement })
-                ]);
-                processAndDraw(); // 데이터 처리 및 그리기
+            if (!videoElement.paused && !videoElement.ended) { 
+                await pose.send({image: videoElement});
+                await hands.send({image: videoElement});
             }
             requestAnimationFrame(renderFrame);
         }
 
-        // 초기 설정
-        async function setup() {
-            messageDiv.innerText = "LOADING MODELS...";
+        async function initPose() {
+            messageDiv.innerText = "LOADING...";
+            
+            // Pose 초기화
             pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
-            pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+            pose.setOptions({ 
+                modelComplexity: 1, 
+                smoothLandmarks: true, 
+                enableSegmentation: false, 
+                minDetectionConfidence: 0.5, 
+                minTrackingConfidence: 0.5 
+            });
             pose.onResults(onPoseResults);
 
+            // Hands 초기화
             hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-            hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
-            hands.onResults(onHandResults);
-
-            const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: isFrontCamera ? 'user' : 'environment' }, audio: false });
-            videoElement.srcObject = stream;
-            videoElement.className = isFrontCamera ? 'mirror' : 'normal';
-            canvasElement.className = isFrontCamera ? 'mirror' : 'normal';
-            
-            return new Promise((resolve) => {
-                videoElement.onloadedmetadata = () => { videoElement.play(); resolve(); };
+            hands.setOptions({
+                maxNumHands: 2,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
             });
+            hands.onResults(onHandsResults);
+
+            await setupCamera();
+            videoElement.play();
+            renderFrame();
+            messageDiv.innerText = "READY";
         }
 
-        startOverlay.addEventListener('click', async () => {
-            if (!successAudio) { successAudio = new Audio('success.mp3'); successAudio.load(); }
-            if (!pullingAudio) { pullingAudio = new Audio('pulling.mp3'); pullingAudio.load(); }
-            if (!shootAudio) { shootAudio = new Audio('shoot.mp3'); shootAudio.load(); }
-            
+        // 시작 버튼 클릭 시 오디오 권한 획득
+        startOverlay.addEventListener('click', () => {
             startOverlay.style.display = 'none';
-            await setup();
             isRunning = true;
-            renderFrame();
+            
+            // 모바일 브라우저 등의 정책을 우회하기 위해 빈 소리 재생 시도
+            successAudioBase.play().then(()=>successAudioBase.pause()).catch(()=>{});
+            pullingAudioBase.play().then(()=> {
+                pullingAudioBase.pause();
+                pullingAudioBase.currentTime = 0;
+            }).catch((e)=>{console.log("Init audio failed", e)});
+
+            initPose();
         });
-        
-        switchBtn.addEventListener('click', async () => { 
-            isRunning = false;
-            isFrontCamera = !isFrontCamera; 
-            switchBtn.innerText = "LOADING..."; 
-            await setup();
-            isRunning = true;
+
+        switchBtn.addEventListener('click', async () => {
+            isFrontCamera = !isFrontCamera;
+            switchBtn.innerText = "LOADING...";
+            await setupCamera();
+            videoElement.play();
             switchBtn.innerText = "CAM SWITCH";
         });
     </script>
