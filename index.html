@@ -140,6 +140,7 @@
         pullingAudioBase.load();
 
         let lastSuccessState = false; // 이전 프레임의 성공 상태 추적
+        let lastVibrationState = false; // 이전 진동 상태 (초록색 여부)
         let isFrontCamera = true;
         let currentStream = null;
         let pose = null;
@@ -382,6 +383,13 @@
             sound.play().catch(e => console.log("Pulling audio play failed:", e));
         }
 
+        // 짧은 진동 (30ms)
+        function triggerVibration() {
+            if ('vibrate' in navigator) {
+                navigator.vibrate(30); // 30ms 짧은 진동
+            }
+        }
+
         function onPoseResults(results) {
             if (!isRunning) return;
 
@@ -456,6 +464,7 @@
                         playSuccessSound();
                     }
                     lastSuccessState = true;
+                    lastVibrationState = true; // 초록색 상태 기록
 
                     // 어깨-팔꿈치 선의 길이 짧아짐 감지
                     let currentArmLength = 0;
@@ -495,6 +504,11 @@
                 } else {
                     messageDiv.innerText = failReason || "CHECK POSTURE";
                     
+                    // 초록색(성공)에서 흰색/빨강(실패)으로 전환 시 진동
+                    if (lastVibrationState) {
+                        triggerVibration(); // 초록색 → 흰색/빨강 전환 시 진동!
+                    }
+                    
                     // 실시간 각도 정보 표시
                     if (p[11] && p[12] && p[13] && p[14] && p[15] && p[16]) {
                         const lHorizon = calculateHorizontalDeviation(p[11], p[15]);
@@ -507,6 +521,7 @@
                     }
 
                     lastSuccessState = false;
+                    lastVibrationState = false; // 초록색 아님 → 진동 상태 리셋
                     prevArmLength = 0;
                 }
 
