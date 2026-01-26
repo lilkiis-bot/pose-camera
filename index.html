@@ -25,7 +25,6 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
-    <!-- [NEW] Hands 모델 추가 -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 </head>
 <body>
@@ -51,25 +50,21 @@
         const debugDiv = document.getElementById('debug');
         const switchBtn = document.getElementById('switch-btn');
         const startOverlay = document.getElementById('start-overlay');
+        const drawingUtils = window;
 
-        // 오디오 객체
+        // 오디오 및 모델 객체
         let successAudio, pullingAudio, shootAudio;
-        
-        // 상태 변수
+        let pose = null, hands = null;
+
+        // [RESTRUCTURED] 상태 변수들
         let isRunning = false;
         let isFrontCamera = true;
-        let pose = null;
-        let hands = null; // [NEW] Hands 모델 인스턴스
-        
-        // Pose 및 Hand 상태를 저장하는 전역 객체
-        let lastPoseState = {
-            landmarks: null,
-            lElbow: 0, rElbow: 0,
-            progressScore: 0,
+        let lastPoseResults = null; // Pose 결과를 저장할 변수
+        let lastHandResults = null; // Hands 결과를 저장할 변수
+        let lastFrameState = {
             isSuccess: false,
             prevLeftElbowPos: null, prevRightElbowPos: null,
-            wasLeftFist: false, wasRightFist: false,
-            wasLeftShoot: false, wasRightShoot: false
+            wasLeftFist: false, wasRightFist: false
         };
 
         // 상수
@@ -82,242 +77,184 @@
         function getDistance(p1, p2) { if (!p1 || !p2) return Infinity; return Math.hypot(p1.x - p2.x, p1.y - p2.y); }
         function getNormalizedScore(current, good, bad, isAngle = false) { if (isAngle) { if (current >= good) return 1.0; if (current <= bad) return 0.0; return (current - bad) / (good - bad); } else { if (current <= good) return 1.0; if (current >= bad) return 0.0; return 1.0 - ((current - good) / (bad - good)); } }
         
-        // [NEW] 팔꿈치가 몸통 바깥에 있는지 판별
-        function isElbowOutsideTorso(elbow, shoulder, hip) {
+        // [IMPROVED] 팔꿈치 위치 판별 함수 (좌우 분리)
+        function isElbowOutside(elbow, shoulder, hip, side) {
             if (!elbow || !shoulder || !hip) return false;
-            // 전면 카메라(mirror)일 때와 후면 카메라일 때를 모두 고려
-            if (isFrontCamera) {
-                return elbow.x > shoulder.x || elbow.x > hip.x;
-            } else {
-                return elbow.x < shoulder.x || elbow.x < hip.x;
+            if (side === 'left') { // 왼쪽 팔: 팔꿈치가 어깨/골반보다 x좌표가 커야 함
+                return elbow.x > shoulder.x && elbow.x > hip.x;
+            } else { // 오른쪽 팔: 팔꿈치가 어깨/골반보다 x좌표가 작아야 함
+                return elbow.x < shoulder.x && elbow.x < hip.x;
             }
         }
         
-        // [NEW & IMPROVED] 주먹 인식 함수
+        // 주먹 인식 함수
         function isFist(handLandmarks) {
-            // 손가락 끝 마디 (8, 12, 16, 20)
+            if(!handLandmarks) return false;
             const fingerTips = [handLandmarks[8], handLandmarks[12], handLandmarks[16], handLandmarks[20]];
-            // 손바닥 중심부 (엄지와 새끼손가락 뿌리 부분의 중간)
-            const palmCenter = {
-                x: (handLandmarks[5].x + handLandmarks[17].x) / 2,
-                y: (handLandmarks[5].y + handLandmarks[17].y) / 2
-            };
-            // 엄지 끝과 검지 뿌리 사이의 거리를 기준치로 사용 (손 크기 보정)
+            const palmCenter = { x: (handLandmarks[5].x + handLandmarks[17].x) / 2, y: (handLandmarks[5].y + handLandmarks[17].y) / 2 };
             const baseDist = getDistance(handLandmarks[4], handLandmarks[5]);
-            
-            for(const tip of fingerTips) {
-                if(getDistance(tip, palmCenter) > baseDist) {
-                    return false; // 하나라도 펴져있으면 주먹이 아님
-                }
-            }
+            for (const tip of fingerTips) { if (getDistance(tip, palmCenter) > baseDist) return false; }
             return true;
         }
 
-        // [NEW] 슛 동작 인식 함수
+        // 슛 동작 인식 함수
         function isShootPose(handLandmarks) {
-            // 검지(8), 중지(12)는 펴지고, 약지(16), 새끼(20)는 구부러짐
-            const wrist = handLandmarks[0];
-            const indexTip = handLandmarks[8];
-            const middleTip = handLandmarks[12];
-            const ringTip = handLandmarks[16];
-            const pinkyTip = handLandmarks[20];
-            const indexPip = handLandmarks[6]; // 검지 두번째 마디
-            
-            // 손 크기 보정을 위한 기준 거리
+            if(!handLandmarks) return false;
+            const wrist = handLandmarks[0], indexTip = handLandmarks[8], middleTip = handLandmarks[12], ringTip = handLandmarks[16], pinkyTip = handLandmarks[20], indexPip = handLandmarks[6];
             const baseDist = getDistance(wrist, indexPip);
-
-            const isIndexExtended = getDistance(wrist, indexTip) > baseDist * 2.5;
-            const isMiddleExtended = getDistance(wrist, middleTip) > baseDist * 2.5;
-            const isRingBent = getDistance(wrist, ringTip) < baseDist * 2.2;
-            const isPinkyBent = getDistance(wrist, pinkyTip) < baseDist * 2.0;
-
-            return isIndexExtended && isMiddleExtended && isRingBent && isPinkyBent;
+            return getDistance(wrist, indexTip) > baseDist * 2.5 && getDistance(wrist, middleTip) > baseDist * 2.5 && getDistance(wrist, ringTip) < baseDist * 2.2 && getDistance(wrist, pinkyTip) < baseDist * 2.0;
         }
 
         // 그리기 함수
         function drawLine(ctx, p1, p2, color, width) { if (!p1 || !p2 || p1.visibility < 0.5 || p2.visibility < 0.5) return; ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.strokeStyle = color; ctx.lineWidth = width; ctx.stroke(); }
-        function drawStickFigure(ctx, p, color) {
-            const lineWidth = 6;
-            if (!p) return;
-            const shoulderMid = p[11] && p[12] ? { x: (p[11].x + p[12].x) / 2, y: (p[11].y + p[12].y) / 2, visibility: (p[11].visibility + p[12].visibility) / 2 } : null;
-            const hipMid = p[23] && p[24] ? { x: (p[23].x + p[24].x) / 2, y: (p[23].y + p[24].y) / 2, visibility: (p[23].visibility + p[24].visibility) / 2 } : null;
-            drawLine(ctx, shoulderMid, hipMid, color, lineWidth);
-            if (p[0]) drawLine(ctx, shoulderMid, p[0], color, lineWidth);
-            
-            drawLine(ctx, p[11], p[12], color, lineWidth); drawLine(ctx, p[23], p[24], color, lineWidth);
-            drawLine(ctx, p[11], p[13], color, lineWidth); drawLine(ctx, p[13], p[15], color, lineWidth);
-            drawLine(ctx, p[12], p[14], color, lineWidth); drawLine(ctx, p[14], p[16], color, lineWidth);
-            drawLine(ctx, p[23], p[25], color, lineWidth); drawLine(ctx, p[25], p[27], color, lineWidth);
-            drawLine(ctx, p[24], p[26], color, lineWidth); drawLine(ctx, p[26], p[28], color, lineWidth);
-        }
-        
-        // [NEW] 손 그리기 함수
-        function drawHands(ctx, handLandmarks, color) {
-            if (!handLandmarks) return;
-            const handConnections = window.HAND_CONNECTIONS; // MediaPipe에서 제공하는 연결 정보
-            drawingUtils.drawConnectors(ctx, handLandmarks, handConnections, {color: color, lineWidth: 4});
-            drawingUtils.drawLandmarks(ctx, handLandmarks, {color: color, lineWidth: -1, radius: 4});
-        }
+        function drawStickFigure(ctx, p, color) { /* ... 기존과 동일 (축약) ... */ if (!p) return; const lineWidth = 6; const shoulderMid = p[11] && p[12] ? { x: (p[11].x + p[12].x) / 2, y: (p[11].y + p[12].y) / 2, visibility: (p[11].visibility + p[12].visibility) / 2 } : null; const hipMid = p[23] && p[24] ? { x: (p[23].x + p[24].x) / 2, y: (p[23].y + p[24].y) / 2, visibility: (p[23].visibility + p[24].visibility) / 2 } : null; drawLine(ctx, shoulderMid, hipMid, color, lineWidth); if (p[0]) drawLine(ctx, shoulderMid, p[0], color, lineWidth); drawLine(ctx, p[11], p[12], color, lineWidth); drawLine(ctx, p[23], p[24], color, lineWidth); drawLine(ctx, p[11], p[13], color, lineWidth); drawLine(ctx, p[13], p[15], color, lineWidth); drawLine(ctx, p[12], p[14], color, lineWidth); drawLine(ctx, p[14], p[16], color, lineWidth); drawLine(ctx, p[23], p[25], color, lineWidth); drawLine(ctx, p[25], p[27], color, lineWidth); drawLine(ctx, p[24], p[26], color, lineWidth); drawLine(ctx, p[26], p[28], color, lineWidth); }
+        function drawHands(ctx, handLandmarks, color) { if (!handLandmarks) return; drawingUtils.drawConnectors(ctx, handLandmarks, window.HAND_CONNECTIONS, {color: color, lineWidth: 4}); drawingUtils.drawLandmarks(ctx, handLandmarks, {color: color, lineWidth: -1, radius: 4}); }
 
+        // [FIX] 모델 결과 콜백: 데이터 저장만 수행
+        function onPoseResults(results) { lastPoseResults = results; }
+        function onHandResults(results) { lastHandResults = results; }
 
-        // [STEP 1] Pose 모델 결과 처리
-        function onPoseResults(results) {
-            if (!isRunning) return;
-            lastPoseState.landmarks = results.poseLandmarks;
-        }
+        // [RESTRUCTURED] 모든 로직을 처리하는 메인 함수
+        function processAndDraw() {
+            // 두 모델의 결과가 모두 준비되었는지 확인
+            if (!lastPoseResults || !lastPoseResults.poseLandmarks || !lastHandResults) {
+                canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+                messageDiv.innerText = "DETECTING...";
+                return; // 데이터가 없으면 아무것도 하지 않음
+            }
 
-        // [STEP 2] Hands 모델 결과 처리 (모든 로직의 중심)
-        function onHandResults(results) {
-            if (!isRunning || !lastPoseState.landmarks) return;
-
-            const width = videoElement.videoWidth; const height = videoElement.videoHeight;
-            canvasElement.width = width; canvasElement.height = height;
+            const width = videoElement.videoWidth, height = videoElement.videoHeight;
             canvasCtx.save();
             canvasCtx.clearRect(0, 0, width, height);
 
+            // Pose 랜드마크를 화면 좌표로 변환
             const p = {};
-            lastPoseState.landmarks.forEach((lm, idx) => p[idx] = toPixel(lm, width, height));
+            lastPoseResults.poseLandmarks.forEach((lm, idx) => p[idx] = toPixel(lm, width, height));
 
-            // --- T-자세 정확도 및 그라데이션 계산 (복원) ---
-            const BODY_TILT_LIMIT = 5, ARM_HORIZON_LIMIT = 15, ELBOW_STRAIGHT_MIN = 165, KNEE_STRAIGHT_MIN = 170;
-            const BODY_TILT_BAD = 20, ARM_HORIZON_BAD = 45, ELBOW_STRAIGHT_BAD = 130, KNEE_STRAIGHT_BAD = 140;
-
+            // T-자세 정확도 및 그라데이션 계산
+            const BODY_TILT_LIMIT = 5, ARM_HORIZON_LIMIT = 15, ELBOW_STRAIGHT_MIN = 165;
+            const BODY_TILT_BAD = 20, ARM_HORIZON_BAD = 45, ELBOW_STRAIGHT_BAD = 130;
             const lElbow = calculateAngle(p[11], p[13], p[15]);
             const rElbow = calculateAngle(p[12], p[14], p[16]);
-            const lTorso = calculateVerticalDeviation(p[11], p[23]), lLeg = calculateVerticalDeviation(p[23], p[27]);
-            const rTorso = calculateVerticalDeviation(p[12], p[24]), rLeg = calculateVerticalDeviation(p[24], p[28]);
-            
-            const lBodyS = Math.min(getNormalizedScore(lTorso, BODY_TILT_LIMIT, BODY_TILT_BAD), getNormalizedScore(lLeg, BODY_TILT_LIMIT, BODY_TILT_BAD));
-            const rBodyS = Math.min(getNormalizedScore(rTorso, BODY_TILT_LIMIT, BODY_TILT_BAD), getNormalizedScore(rLeg, BODY_TILT_LIMIT, BODY_TILT_BAD));
             const lArmS = getNormalizedScore(lElbow, ELBOW_STRAIGHT_MIN, ELBOW_STRAIGHT_BAD, true);
             const rArmS = getNormalizedScore(rElbow, ELBOW_STRAIGHT_MIN, ELBOW_STRAIGHT_BAD, true);
+            const progressScore = Math.max(lArmS, rArmS);
+            const isSuccess = (lElbow > ELBOW_STRAIGHT_MIN) || (rElbow > ELBOW_STRAIGHT_MIN);
+
+            // 손 모양 인식
+            let leftHand, rightHand;
+            if (lastHandResults.multiHandLandmarks) {
+                for (let i = 0; i < lastHandResults.multiHandLandmarks.length; i++) {
+                    const handedness = lastHandResults.multiHandedness[i].label;
+                    if (handedness === 'Left') leftHand = lastHandResults.multiHandLandmarks[i];
+                    else if (handedness === 'Right') rightHand = lastHandResults.multiHandLandmarks[i];
+                }
+            }
+            const isLeftFist = isFist(leftHand);
+            const isRightFist = isFist(rightHand);
+            const isLeftShoot = isShootPose(leftHand);
+            const isRightShoot = isShootPose(rightHand);
             
-            lastPoseState.progressScore = Math.max(Math.min(lBodyS, lArmS), Math.min(rBodyS, rArmS));
-            lastPoseState.isSuccess = (lElbow > ELBOW_STRAIGHT_MIN) || (rElbow > ELBOW_STRAIGHT_MIN);
-
-            // --- 소리 재생 로직 ---
-            let isLeftFist = false, isRightFist = false;
-            let isLeftShoot = false, isRightShoot = false;
-
-            if (results.multiHandLandmarks) {
-                for (let i = 0; i < results.multiHandLandmarks.length; i++) {
-                    const handLandmarks = results.multiHandLandmarks[i];
-                    const handedness = results.multiHandedness[i].label; // 'Left' or 'Right'
-                    
-                    if (handedness === 'Left') {
-                        isLeftFist = isFist(handLandmarks);
-                        isLeftShoot = isShootPose(handLandmarks);
-                    } else if (handedness === 'Right') {
-                        isRightFist = isFist(handLandmarks);
-                        isRightShoot = isShootPose(handLandmarks);
-                    }
+            // Pulling 소리 로직
+            if (isLeftFist && lElbow < ELBOW_BENT_ANGLE && isElbowOutside(p[13], p[11], p[23], 'left') && lastFrameState.prevLeftElbowPos) {
+                if (getDistance(p[13], lastFrameState.prevLeftElbowPos) > ELBOW_MOVE_THRESHOLD) {
+                    if (pullingAudio && pullingAudio.paused) pullingAudio.play().catch(e => {});
+                }
+            }
+            if (isRightFist && rElbow < ELBOW_BENT_ANGLE && isElbowOutside(p[14], p[12], p[24], 'right') && lastFrameState.prevRightElbowPos) {
+                if (getDistance(p[14], lastFrameState.prevRightElbowPos) > ELBOW_MOVE_THRESHOLD) {
+                    if (pullingAudio && pullingAudio.paused) pullingAudio.play().catch(e => {});
                 }
             }
 
-            // Pulling 소리
-            if (isLeftFist && lElbow < ELBOW_BENT_ANGLE && isElbowOutsideTorso(p[13], p[11], p[23]) && lastPoseState.prevLeftElbowPos) {
-                if (getDistance(p[13], lastPoseState.prevLeftElbowPos) > ELBOW_MOVE_THRESHOLD) {
-                    if (pullingAudio && pullingAudio.paused) pullingAudio.play().catch(e=>{});
-                }
-            }
-            if (isRightFist && rElbow < ELBOW_BENT_ANGLE && isElbowOutsideTorso(p[14], p[12], p[24]) && lastPoseState.prevRightElbowPos) {
-                if (getDistance(p[14], lastPoseState.prevRightElbowPos) > ELBOW_MOVE_THRESHOLD) {
-                    if (pullingAudio && pullingAudio.paused) pullingAudio.play().catch(e=>{});
-                }
-            }
-
-            // Shoot 소리
+            // Shoot 소리 로직
             const faceProximity = getDistance(p[11], p[12]);
-            if (lastPoseState.wasLeftFist && isLeftShoot && getDistance(p[15], p[0]) < faceProximity) {
-                if(shootAudio) { shootAudio.currentTime = 0; shootAudio.play().catch(e=>{}); }
+            if (lastFrameState.wasLeftFist && isLeftShoot && getDistance(p[15], p[0]) < faceProximity) {
+                if (shootAudio) { shootAudio.currentTime = 0; shootAudio.play().catch(e => {}); }
             }
-            if (lastPoseState.wasRightFist && isRightShoot && getDistance(p[16], p[0]) < faceProximity) {
-                if(shootAudio) { shootAudio.currentTime = 0; shootAudio.play().catch(e=>{}); }
+            if (lastFrameState.wasRightFist && isRightShoot && getDistance(p[16], p[0]) < faceProximity) {
+                if (shootAudio) { shootAudio.currentTime = 0; shootAudio.play().catch(e => {}); }
             }
-            
-            // --- 그리기 및 UI 업데이트 ---
-            let color, failReason = "";
-            if (lastPoseState.isSuccess) {
+
+            // 그리기 및 UI 업데이트
+            let color;
+            if (isSuccess) {
                 color = "#00FF00"; messageDiv.innerText = "SUCCESS";
-                if (!lastPoseState.isSuccessLastFrame && successAudio) {
+                if (!lastFrameState.isSuccess && successAudio) {
                     successAudio.currentTime = 0; successAudio.play().catch(e => {});
                 }
             } else {
-                const white = Math.floor(255 * lastPoseState.progressScore);
-                color = `rgb(255, ${white}, ${white})`;
+                const white = Math.floor(255 * progressScore); color = `rgb(255, ${white}, ${white})`;
                 messageDiv.innerText = "STAND STRAIGHT";
             }
-            messageDiv.style.borderColor = color; messageDiv.style.color = lastPoseState.isSuccess ? color : "#FFFFFF";
-            debugDiv.innerText = `POSE ACCURACY: ${(lastPoseState.progressScore * 100).toFixed(0)}%`;
+            messageDiv.style.borderColor = color; messageDiv.style.color = isSuccess ? color : "#FFFFFF";
+            debugDiv.innerText = `POSE ACCURACY: ${(progressScore * 100).toFixed(0)}%`;
             
             drawStickFigure(canvasCtx, p, color);
-            // [NEW] 손 그리기
-            if (results.multiHandLandmarks) {
-                for (const landmarks of results.multiHandLandmarks) {
-                    drawHands(canvasCtx, landmarks, color);
-                }
-            }
+            drawHands(canvasCtx, leftHand, color);
+            drawHands(canvasCtx, rightHand, color);
 
-            // --- 상태 업데이트 ---
-            lastPoseState.isSuccessLastFrame = lastPoseState.isSuccess;
-            lastPoseState.prevLeftElbowPos = p[13];
-            lastPoseState.prevRightElbowPos = p[14];
-            lastPoseState.wasLeftFist = isLeftFist;
-            lastPoseState.wasRightFist = isRightFist;
-            lastPoseState.wasLeftShoot = isLeftShoot;
-            lastPoseState.wasRightShoot = isRightShoot;
+            // 상태 업데이트
+            lastFrameState.isSuccess = isSuccess;
+            lastFrameState.prevLeftElbowPos = p[13]; lastFrameState.prevRightElbowPos = p[14];
+            lastFrameState.wasLeftFist = isLeftFist; lastFrameState.wasRightFist = isRightFist;
 
             canvasCtx.restore();
         }
 
-        async function setupCameraAndModels() { 
-            // 카메라 설정
-            let currentStream;
-            if (currentStream) currentStream.getTracks().forEach(track => track.stop()); 
-            const constraints = { video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: isFrontCamera ? 'user' : 'environment' }, audio: false }; 
-            try { 
-                const stream = await navigator.mediaDevices.getUserMedia(constraints); 
-                currentStream = stream; 
-                videoElement.srcObject = stream; 
-                videoElement.className = isFrontCamera ? 'mirror' : 'normal'; 
-                canvasElement.className = isFrontCamera ? 'mirror' : 'normal'; 
-                await new Promise((resolve) => { videoElement.onloadedmetadata = () => { resolve(videoElement); }; }); 
-            } catch (err) { alert("Camera Error: " + err.message); }
+        // 메인 애니메이션 루프
+        async function renderFrame() {
+            if (isRunning && !videoElement.paused && !videoElement.ended) {
+                // 두 모델에 동시에 이미지 전송 요청
+                await Promise.all([
+                    pose.send({ image: videoElement }),
+                    hands.send({ image: videoElement })
+                ]);
+                processAndDraw(); // 데이터 처리 및 그리기
+            }
+            requestAnimationFrame(renderFrame);
+        }
 
-            // 모델 설정
+        // 초기 설정
+        async function setup() {
             messageDiv.innerText = "LOADING MODELS...";
             pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
-            pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
+            pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
             pose.onResults(onPoseResults);
 
             hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-            hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
+            hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
             hands.onResults(onHandResults);
 
-            videoElement.play();
-            renderFrame();
-            messageDiv.innerText = "READY";
-        }
-        
-        async function renderFrame() { 
-            if (isRunning && !videoElement.paused && !videoElement.ended) { 
-                await pose.send({ image: videoElement });
-                await hands.send({ image: videoElement });
-            } 
-            requestAnimationFrame(renderFrame); 
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: isFrontCamera ? 'user' : 'environment' }, audio: false });
+            videoElement.srcObject = stream;
+            videoElement.className = isFrontCamera ? 'mirror' : 'normal';
+            canvasElement.className = isFrontCamera ? 'mirror' : 'normal';
+            
+            return new Promise((resolve) => {
+                videoElement.onloadedmetadata = () => { videoElement.play(); resolve(); };
+            });
         }
 
-        startOverlay.addEventListener('click', () => {
+        startOverlay.addEventListener('click', async () => {
             if (!successAudio) { successAudio = new Audio('success.mp3'); successAudio.load(); }
             if (!pullingAudio) { pullingAudio = new Audio('pulling.mp3'); pullingAudio.load(); }
             if (!shootAudio) { shootAudio = new Audio('shoot.mp3'); shootAudio.load(); }
             
             startOverlay.style.display = 'none';
+            await setup();
             isRunning = true;
-            setupCameraAndModels();
+            renderFrame();
         });
         
-        switchBtn.addEventListener('click', async () => { isFrontCamera = !isFrontCamera; switchBtn.innerText = "LOADING..."; await setupCameraAndModels(); videoElement.play(); switchBtn.innerText = "CAM SWITCH"; });
+        switchBtn.addEventListener('click', async () => { 
+            isRunning = false;
+            isFrontCamera = !isFrontCamera; 
+            switchBtn.innerText = "LOADING..."; 
+            await setup();
+            isRunning = true;
+            switchBtn.innerText = "CAM SWITCH";
+        });
     </script>
 </body>
 </html>
