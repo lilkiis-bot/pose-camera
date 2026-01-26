@@ -149,6 +149,11 @@
         let prevArmLength = 0; // 어깨-팔꿈치 거리
         let lastPullTime = 0;
 
+        // 스무딩을 위한 변수
+        let prevPostureScore = 0;
+        let prevColor = "#FF0000";
+        const SMOOTHING_FACTOR = 0.3; // 0~1, 낮을수록 부드러움 (이전 값 영향 커짐)
+
         function toPixel(landmark, width, height) {
             return { x: landmark.x * width, y: landmark.y * height };
         }
@@ -208,6 +213,11 @@
             const b = Math.round(b1 + (b2 - b1) * factor);
             
             return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+        }
+
+        // 값 스무딩 (이전 값과 현재 값의 가중 평균)
+        function smoothValue(current, previous, factor) {
+            return previous + (current - previous) * factor;
         }
 
         // 자세 점수 계산 (0~1)
@@ -412,6 +422,10 @@
 
                     // 자세 점수 계산
                     postureScore = calculatePostureScore(lHorizon, rHorizon, lElbowAngle, rElbowAngle);
+                    
+                    // 스무딩 적용 (떨림 방지)
+                    postureScore = smoothValue(postureScore, prevPostureScore, SMOOTHING_FACTOR);
+                    prevPostureScore = postureScore;
 
                     if (isLeftStraight && !isRightStraight) {
                         isSuccess = true;
@@ -427,7 +441,11 @@
                 }
 
                 // 점수에 따른 색상
-                let color = getColorByScore(postureScore);
+                let currentColor = getColorByScore(postureScore);
+                
+                // 색상 스무딩 (급격한 색상 변화 방지)
+                let color = interpolateColor(prevColor, currentColor, SMOOTHING_FACTOR * 2); // 색상은 조금 더 빠르게
+                prevColor = color;
 
                 // 성공 조건: 점수 0.7 이상
                 if (postureScore >= 0.7 && isSuccess) {
@@ -527,10 +545,9 @@
             pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
             pose.setOptions({ 
                 modelComplexity: 1, 
-                smoothLandmarks: true, 
-                enableSegmentation: false, 
-                minDetectionConfidence: 0.5, 
-                minTrackingConfidence: 0.5 
+                smoothLandmarks: true,
+                minDetectionConfidence: 0.7,  // 0.5 → 0.7 (더 확실한 감지만)
+                minTrackingConfidence: 0.7    // 0.5 → 0.7 (더 안정적인 추적)
             });
             pose.onResults(onPoseResults);
 
