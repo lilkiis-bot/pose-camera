@@ -103,7 +103,6 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 </head>
 <body>
     <div class="container">
@@ -144,16 +143,11 @@
         let isFrontCamera = true;
         let currentStream = null;
         let pose = null;
-        let hands = null;
         let isRunning = false;
 
         // 로직 변수
         let prevArmLength = 0; // 어깨-팔꿈치 거리
         let lastPullTime = 0;
-
-        // 손 landmark 저장
-        let leftHandLandmarks = null;
-        let rightHandLandmarks = null;
 
         function toPixel(landmark, width, height) {
             return { x: landmark.x * width, y: landmark.y * height };
@@ -225,32 +219,51 @@
             const isLeftStraight = (lHorizon < ARM_HORIZON_LIMIT) && (lElbowAngle > ELBOW_STRAIGHT_MIN);
             const isRightStraight = (rHorizon < ARM_HORIZON_LIMIT) && (rElbowAngle > ELBOW_STRAIGHT_MIN);
             
+            let score = 0;
+            
             if (isLeftStraight && !isRightStraight) {
-                // 왼팔이 펴진 상태 - 오른팔 굽힘 정도 평가
-                const horizonScore = Math.max(0, 1 - rHorizon / 90);
-                const elbowScore = Math.max(0, 1 - rElbowAngle / 180);
-                return (horizonScore + elbowScore) / 2;
+                // 왼팔이 펴진 상태 - 오른팔이 얼마나 좋은 자세인지
+                // 수평에 가까울수록 좋음 (0도가 베스트)
+                const horizonScore = Math.max(0, 1 - rHorizon / 30);
+                // 굽혀질수록 좋음 (90도가 베스트)
+                const elbowScore = Math.max(0, 1 - Math.abs(rElbowAngle - 90) / 90);
+                score = (horizonScore * 0.3 + elbowScore * 0.7);
             } else if (isRightStraight && !isLeftStraight) {
-                // 오른팔이 펴진 상태 - 왼팔 굽힘 정도 평가
-                const horizonScore = Math.max(0, 1 - lHorizon / 90);
-                const elbowScore = Math.max(0, 1 - lElbowAngle / 180);
-                return (horizonScore + elbowScore) / 2;
+                // 오른팔이 펴진 상태 - 왼팔이 얼마나 좋은 자세인지
+                const horizonScore = Math.max(0, 1 - lHorizon / 30);
+                const elbowScore = Math.max(0, 1 - Math.abs(lElbowAngle - 90) / 90);
+                score = (horizonScore * 0.3 + elbowScore * 0.7);
+            } else if (isLeftStraight && isRightStraight) {
+                // 둘 다 펴짐 - 약간의 점수
+                score = 0.3;
             } else {
-                // 둘 다 펴졌거나 둘 다 굽힘 - 낮은 점수
-                return 0;
+                // 둘 다 굽힘 또는 이상한 자세
+                // 그래도 팔을 들었는지는 체크
+                const leftRaised = lHorizon < 45;
+                const rightRaised = rHorizon < 45;
+                if (leftRaised || rightRaised) {
+                    score = 0.2;
+                } else {
+                    score = 0;
+                }
             }
+            
+            return Math.min(1, Math.max(0, score));
         }
 
         // 점수에 따른 색상 반환
         function getColorByScore(score) {
-            if (score >= 0.8) {
-                return "#00FF00"; // 초록색 (완벽)
-            } else if (score >= 0.4) {
-                // 빨강 -> 흰색 보간
-                const factor = (score - 0.4) / 0.4;
+            if (score >= 0.7) {
+                // 0.7~1.0: 흰색 -> 초록색 그라데이션
+                const factor = (score - 0.7) / 0.3;
+                return interpolateColor("#FFFFFF", "#00FF00", factor);
+            } else if (score >= 0.3) {
+                // 0.3~0.7: 빨강 -> 흰색 그라데이션
+                const factor = (score - 0.3) / 0.4;
                 return interpolateColor("#FF0000", "#FFFFFF", factor);
             } else {
-                return "#FF0000"; // 빨강 (부족)
+                // 0~0.3: 빨강
+                return "#FF0000";
             }
         }
 
@@ -414,7 +427,8 @@
                 // 점수에 따른 색상
                 let color = getColorByScore(postureScore);
 
-                if (isSuccess) {
+                // 성공 조건: 점수 0.7 이상
+                if (postureScore >= 0.7 && isSuccess) {
                     messageDiv.innerText = "PULL BACK!";
                     messageDiv.style.borderColor = "#00FF00";
                     messageDiv.style.color = "#00FF00";
@@ -463,46 +477,25 @@
                     messageDiv.innerText = failReason || "CHECK POSTURE";
                     messageDiv.style.borderColor = color;
                     messageDiv.style.color = "#FFFFFF";
-                    debugDiv.innerText = `SCORE: ${(postureScore * 100).toFixed(0)}%`;
+                    
+                    // 실시간 각도 정보 표시
+                    if (p[11] && p[12] && p[13] && p[14] && p[15] && p[16]) {
+                        const lHorizon = calculateHorizontalDeviation(p[11], p[15]);
+                        const rHorizon = calculateHorizontalDeviation(p[12], p[16]);
+                        const lElbowAngle = calculateAngle(p[11], p[13], p[15]);
+                        const rElbowAngle = calculateAngle(p[12], p[14], p[16]);
+                        debugDiv.innerText = `SCORE: ${(postureScore * 100).toFixed(0)}% | L:${lElbowAngle.toFixed(0)}° R:${rElbowAngle.toFixed(0)}°`;
+                    } else {
+                        debugDiv.innerText = `SCORE: ${(postureScore * 100).toFixed(0)}%`;
+                    }
 
                     lastSuccessState = false;
                     prevArmLength = 0;
                 }
 
                 drawStickFigure(canvasCtx, p, color, activeArm, isPulling);
-
-                // 손 그리기
-                if (leftHandLandmarks) {
-                    drawHand(canvasCtx, leftHandLandmarks, color, width, height);
-                }
-                if (rightHandLandmarks) {
-                    drawHand(canvasCtx, rightHandLandmarks, color, width, height);
-                }
             }
             canvasCtx.restore();
-        }
-
-        function onHandsResults(results) {
-            if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
-                leftHandLandmarks = null;
-                rightHandLandmarks = null;
-                return;
-            }
-
-            // 왼손/오른손 분류
-            leftHandLandmarks = null;
-            rightHandLandmarks = null;
-
-            results.multiHandLandmarks.forEach((landmarks, index) => {
-                if (results.multiHandedness && results.multiHandedness[index]) {
-                    const label = results.multiHandedness[index].label; // "Left" or "Right"
-                    if (label === "Left") {
-                        leftHandLandmarks = landmarks;
-                    } else {
-                        rightHandLandmarks = landmarks;
-                    }
-                }
-            });
         }
 
         async function setupCamera() {
@@ -524,7 +517,6 @@
         async function renderFrame() {
             if (!videoElement.paused && !videoElement.ended) { 
                 await pose.send({image: videoElement});
-                await hands.send({image: videoElement});
             }
             requestAnimationFrame(renderFrame);
         }
@@ -542,16 +534,6 @@
                 minTrackingConfidence: 0.5 
             });
             pose.onResults(onPoseResults);
-
-            // Hands 초기화
-            hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-            hands.setOptions({
-                maxNumHands: 2,
-                modelComplexity: 1,
-                minDetectionConfidence: 0.5,
-                minTrackingConfidence: 0.5
-            });
-            hands.onResults(onHandsResults);
 
             await setupCamera();
             videoElement.play();
