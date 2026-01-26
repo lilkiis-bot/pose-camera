@@ -429,10 +429,10 @@
 
                     if (isLeftStraight && !isRightStraight) {
                         isSuccess = true;
-                        activeArm = 1; // 왼팔이 펴진 팔
+                        activeArm = 2; // 왼팔이 펴짐 → 거울모드에서는 오른쪽으로 보임
                     } else if (isRightStraight && !isLeftStraight) {
                         isSuccess = true;
-                        activeArm = 2; // 오른팔이 펴진 팔
+                        activeArm = 1; // 오른팔이 펴짐 → 거울모드에서는 왼쪽으로 보임
                     } else if (isLeftStraight && isRightStraight) {
                         failReason = "USE ONLY ONE ARM";
                     } else {
