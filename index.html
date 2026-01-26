@@ -212,40 +212,40 @@
 
         // 자세 점수 계산 (0~1)
         function calculatePostureScore(lHorizon, rHorizon, lElbowAngle, rElbowAngle) {
-            const ARM_HORIZON_LIMIT = 15;
-            const ELBOW_STRAIGHT_MIN = 165;
+            const ARM_HORIZON_LIMIT = 15;    // 수평 허용 각도
+            const ELBOW_STRAIGHT_MIN = 165;  // 팔꿈치 펴짐 최소 각도
             
-            // 한쪽 팔은 펴지고, 다른쪽은 굽혀져야 함
             const isLeftStraight = (lHorizon < ARM_HORIZON_LIMIT) && (lElbowAngle > ELBOW_STRAIGHT_MIN);
             const isRightStraight = (rHorizon < ARM_HORIZON_LIMIT) && (rElbowAngle > ELBOW_STRAIGHT_MIN);
             
             let score = 0;
             
             if (isLeftStraight && !isRightStraight) {
-                // 왼팔이 펴진 상태 - 오른팔이 얼마나 좋은 자세인지
-                // 수평에 가까울수록 좋음 (0도가 베스트)
-                const horizonScore = Math.max(0, 1 - rHorizon / 30);
-                // 굽혀질수록 좋음 (90도가 베스트)
-                const elbowScore = Math.max(0, 1 - Math.abs(rElbowAngle - 90) / 90);
-                score = (horizonScore * 0.3 + elbowScore * 0.7);
+                // 왼팔만 수평으로 펴짐 - 완벽
+                // 얼마나 수평에 가까운지
+                const horizonScore = Math.max(0, 1 - lHorizon / ARM_HORIZON_LIMIT);
+                // 얼마나 쭉 펴졌는지
+                const straightScore = Math.max(0, (lElbowAngle - ELBOW_STRAIGHT_MIN) / 15);
+                score = (horizonScore * 0.5 + straightScore * 0.5);
             } else if (isRightStraight && !isLeftStraight) {
-                // 오른팔이 펴진 상태 - 왼팔이 얼마나 좋은 자세인지
-                const horizonScore = Math.max(0, 1 - lHorizon / 30);
-                const elbowScore = Math.max(0, 1 - Math.abs(lElbowAngle - 90) / 90);
-                score = (horizonScore * 0.3 + elbowScore * 0.7);
+                // 오른팔만 수평으로 펴짐 - 완벽
+                const horizonScore = Math.max(0, 1 - rHorizon / ARM_HORIZON_LIMIT);
+                const straightScore = Math.max(0, (rElbowAngle - ELBOW_STRAIGHT_MIN) / 15);
+                score = (horizonScore * 0.5 + straightScore * 0.5);
             } else if (isLeftStraight && isRightStraight) {
-                // 둘 다 펴짐 - 약간의 점수
-                score = 0.3;
+                // 둘 다 펴짐 - 중간 점수 (한쪽만 펴야 함)
+                score = 0.5;
             } else {
-                // 둘 다 굽힘 또는 이상한 자세
-                // 그래도 팔을 들었는지는 체크
-                const leftRaised = lHorizon < 45;
-                const rightRaised = rHorizon < 45;
-                if (leftRaised || rightRaised) {
-                    score = 0.2;
-                } else {
-                    score = 0;
-                }
+                // 둘 다 안 펴짐 - 얼마나 가까운지 점수화
+                const leftProgress = Math.max(0, 
+                    (1 - lHorizon / 45) * 0.5 + 
+                    (lElbowAngle / 180) * 0.5
+                );
+                const rightProgress = Math.max(0,
+                    (1 - rHorizon / 45) * 0.5 + 
+                    (rElbowAngle / 180) * 0.5
+                );
+                score = Math.max(leftProgress, rightProgress) * 0.4;
             }
             
             return Math.min(1, Math.max(0, score));
@@ -413,14 +413,14 @@
 
                     if (isLeftStraight && !isRightStraight) {
                         isSuccess = true;
-                        activeArm = 2; // 오른팔이 굽은(동작) 팔
+                        activeArm = 1; // 왼팔이 펴진 팔
                     } else if (isRightStraight && !isLeftStraight) {
                         isSuccess = true;
-                        activeArm = 1; // 왼팔이 굽은(동작) 팔
+                        activeArm = 2; // 오른팔이 펴진 팔
                     } else if (isLeftStraight && isRightStraight) {
-                        failReason = "BEND ONE ARM";
+                        failReason = "USE ONLY ONE ARM";
                     } else {
-                        failReason = "RAISE ONE ARM";
+                        failReason = "RAISE ONE ARM STRAIGHT";
                     }
                 }
 
@@ -442,10 +442,11 @@
                     // 어깨-팔꿈치 선의 길이 짧아짐 감지
                     let currentArmLength = 0;
                     
-                    if (activeArm === 1) {
-                        currentArmLength = getDistance(p[11], p[13]);
-                    } else if (activeArm === 2) {
-                        currentArmLength = getDistance(p[12], p[14]);
+                    // 펴진 팔(activeArm)의 어깨-팔꿈치 거리 측정
+                    if (activeArm === 1) { // 왼팔이 펴짐
+                        currentArmLength = getDistance(p[11], p[13]); // 왼쪽 어깨-팔꿈치
+                    } else if (activeArm === 2) { // 오른팔이 펴짐
+                        currentArmLength = getDistance(p[12], p[14]); // 오른쪽 어깨-팔꿈치
                     }
 
                     if (prevArmLength > 0) {
