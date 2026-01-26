@@ -5,105 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Stickman Pose Audio</title>
     <style>
-        body {
-            margin: 0;
-            padding: 0;
-            background-color: #000;
-            overflow: hidden;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            font-family: 'Courier New', Courier, monospace; /* 각진 폰트 */
-        }
-        .container {
-            position: relative;
-            width: 100vw;
-            height: 100vh;
-        }
-        video, canvas {
-            position: absolute;
-            left: 0;
-            top: 0;
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
+        body { margin: 0; padding: 0; background-color: #000; overflow: hidden; display: flex; justify-content: center; align-items: center; font-family: 'Courier New', Courier, monospace; }
+        .container { position: relative; width: 100vw; height: 100vh; }
+        video, canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: cover; }
         .mirror { transform: scaleX(-1); }
         .normal { transform: scaleX(1); }
-        
         video { z-index: 1; }
         canvas { z-index: 2; }
-
-        /* UI 스타일: 둥근 느낌 제거, 테두리 각지게 */
-        #status-box {
-            position: absolute;
-            top: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            z-index: 3;
-            width: 90%;
-            text-align: center;
-            pointer-events: none;
-        }
-        #message {
-            background: rgba(0, 0, 0, 0.9);
-            color: white;
-            padding: 15px;
-            border: 2px solid #FF0000; /* 각진 테두리 */
-            font-size: 1rem;
-            font-weight: bold;
-            text-transform: uppercase;
-            transition: all 0.2s; /* 색상 변경 시 부드러운 전환 효과 */
-        }
-        #debug {
-            margin-top: 5px;
-            font-size: 0.8rem;
-            color: #ccc;
-            background: black;
-            display: inline-block;
-            padding: 2px 5px;
-        }
-
-        /* 버튼 스타일: 텍스트만 사용, 각지게 */
-        #switch-btn {
-            position: absolute;
-            bottom: 30px;
-            right: 20px;
-            z-index: 4;
-            background-color: #333;
-            color: white;
-            border: 2px solid white;
-            padding: 15px 20px;
-            font-family: inherit;
-            font-weight: bold;
-            font-size: 1rem;
-            cursor: pointer;
-        }
-        #switch-btn:active {
-            background-color: white;
-            color: black;
-        }
-
-        /* 시작 오버레이 (소리 권한용) */
-        #start-overlay {
-            position: absolute;
-            top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.9);
-            z-index: 10;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            color: white;
-            cursor: pointer;
-        }
-        #start-btn {
-            border: 2px solid #00FF00;
-            padding: 20px;
-            margin-top: 20px;
-            font-size: 1.5rem;
-            color: #00FF00;
-        }
+        #status-box { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); z-index: 3; width: 90%; text-align: center; pointer-events: none; }
+        #message { background: rgba(0, 0, 0, 0.9); color: white; padding: 15px; border: 2px solid #FF0000; font-size: 1rem; font-weight: bold; text-transform: uppercase; transition: all 0.2s; }
+        #debug { margin-top: 5px; font-size: 0.8rem; color: #ccc; background: black; display: inline-block; padding: 2px 5px; }
+        #switch-btn { position: absolute; bottom: 30px; right: 20px; z-index: 4; background-color: #333; color: white; border: 2px solid white; padding: 15px 20px; font-family: inherit; font-weight: bold; font-size: 1rem; cursor: pointer; }
+        #switch-btn:active { background-color: white; color: black; }
+        #start-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 10; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; cursor: pointer; }
+        #start-btn { border: 2px solid #00FF00; padding: 20px; margin-top: 20px; font-size: 1.5rem; color: #00FF00; }
     </style>
     <!-- MediaPipe -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -115,15 +30,11 @@
     <div class="container">
         <video id="input_video" class="mirror" playsinline autoplay muted></video>
         <canvas id="output_canvas" class="mirror"></canvas>
-        
         <div id="status-box">
             <div id="message">WAITING FOR CAMERA...</div>
             <div id="debug"></div>
         </div>
-
         <button id="switch-btn">CAM SWITCH</button>
-
-        <!-- 소리 재생 권한을 얻기 위한 시작 화면 -->
         <div id="start-overlay">
             <div>TOUCH TO START</div>
             <div id="start-btn">START</div>
@@ -139,315 +50,169 @@
         const switchBtn = document.getElementById('switch-btn');
         const startOverlay = document.getElementById('start-overlay');
 
-        // === [소리 설정] ===
-        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        let wasSuccessLastFrame = false; // 이전 프레임의 성공 여부 추적
-
-        // [NEW] 성공 효과음 재생 함수 (파일 없이 프로그램으로 생성)
-        function playSuccessSound() {
-            if (audioContext.state === 'suspended') {
-                audioContext.resume();
-            }
-            const oscillator = audioContext.createOscillator();
-            const gainNode = audioContext.createGain();
-
-            oscillator.connect(gainNode);
-            gainNode.connect(audioContext.destination);
-
-            oscillator.type = 'sine'; // 부드러운 '삐' 소리
-            oscillator.frequency.setValueAtTime(880, audioContext.currentTime); // '라' 음
-            gainNode.gain.setValueAtTime(0.5, audioContext.currentTime); // 볼륨
-            gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.5); // 0.5초에 걸쳐 소리 줄이기
-
-            oscillator.start(audioContext.currentTime);
-            oscillator.stop(audioContext.currentTime + 0.5);
-        }
-
+        // === [오디오 및 상태 설정] ===
+        let successAudio = null; // 오디오 객체를 저장할 변수
+        let wasSuccessLastFrame = false;
         let isFrontCamera = true;
         let currentStream = null;
         let pose = null;
         let isRunning = false;
 
-        // 좌표 변환
-        function toPixel(landmark, width, height) {
-            return { x: landmark.x * width, y: landmark.y * height };
-        }
+        // === [에너지 빔 효과 설정] ===
+        let activeBeams = [];
+        const BEAM_SPEED = 30; // 빔 속도
+        const BEAM_LENGTH = 150; // 빔 길이
+        const BEAM_COLOR = "white";
+        const BEAM_WIDTH = 8;
+        let wasLeftArmReadyToFire = false;
+        let wasRightArmReadyToFire = false;
 
-        // 각도 및 편차 계산 함수들
-        function calculateAngle(a, b, c) {
-            const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
-            let angle = Math.abs(radians * 180.0 / Math.PI);
-            if (angle > 180.0) angle = 360 - angle;
-            return angle;
-        }
+        function toPixel(landmark, width, height) { return landmark ? { x: landmark.x * width, y: landmark.y * height, visibility: landmark.visibility } : null; }
+        function calculateAngle(a, b, c) { if(!a||!b||!c) return 0; const rad = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x); let angle = Math.abs(rad * 180.0 / Math.PI); return angle > 180.0 ? 360 - angle : angle; }
+        function calculateVerticalDeviation(a, b) { if(!a||!b) return 90; const dx = Math.abs(b.x - a.x); const dy = Math.abs(b.y - a.y); return Math.atan2(dx, dy) * 180.0 / Math.PI; }
+        function calculateHorizontalDeviation(a, b) { if(!a||!b) return 90; const dy = b.y - a.y; const dx = b.x - a.x; let angle = Math.abs(Math.atan2(dy, dx) * 180.0 / Math.PI); return angle > 90 ? Math.abs(180 - angle) : angle; }
+        function getDistance(p1, p2) { if (!p1 || !p2) return Infinity; return Math.hypot(p1.x - p2.x, p1.y - p2.y); }
+        function getNormalizedScore(current, good, bad, isAngle = false) { if (isAngle) { if (current >= good) return 1.0; if (current <= bad) return 0.0; return (current - bad) / (good - bad); } else { if (current <= good) return 1.0; if (current >= bad) return 0.0; return 1.0 - ((current - good) / (bad - good)); } }
 
-        function calculateVerticalDeviation(a, b) {
-            const dx = Math.abs(b.x - a.x);
-            const dy = Math.abs(b.y - a.y);
-            const radians = Math.atan2(dx, dy); 
-            return radians * 180.0 / Math.PI;
-        }
-
-        function calculateHorizontalDeviation(a, b) {
-            const dy = b.y - a.y;
-            const dx = b.x - a.x;
-            let angle = Math.atan2(dy, dx) * 180.0 / Math.PI;
-            angle = Math.abs(angle); 
-            if (angle > 90) angle = Math.abs(180 - angle);
-            return angle;
-        }
+        function drawLine(ctx, p1, p2, color, width) { if (!p1 || !p2 || p1.visibility < 0.5 || p2.visibility < 0.5) return; ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.strokeStyle = color; ctx.lineWidth = width; ctx.stroke(); }
         
-        // 값의 진행률을 0~1로 정규화하는 함수
-        function getNormalizedScore(current, good, bad, isAngle = false) {
-            if (isAngle) { // 각도가 클수록 좋은 경우
-                if (current >= good) return 1.0;
-                if (current <= bad) return 0.0;
-                return (current - bad) / (good - bad);
-            } else { // 값이 작을수록 좋은 경우
-                if (current <= good) return 1.0;
-                if (current >= bad) return 0.0;
-                return 1.0 - ((current - good) / (bad - good));
-            }
-        }
-
-
-        // === [커스텀 그리기 함수: 스틱맨] ===
-        function drawLine(ctx, p1, p2, color, width) {
-            if (!p1 || !p2 || !p1.visibility || p1.visibility < 0.5 || !p2.visibility || p2.visibility < 0.5) return;
-            ctx.beginPath();
-            ctx.moveTo(p1.x, p1.y);
-            ctx.lineTo(p2.x, p2.y);
-            ctx.strokeStyle = color;
-            ctx.lineWidth = width;
-            ctx.stroke();
-        }
-
         function drawStickFigure(ctx, p, color) {
-            const lineWidth = 6; // 선 두께
-
-            // [NEW] 몸통: 어깨 중앙과 골반 중앙을 잇는 선
+            const lineWidth = 6;
             if (p[11] && p[12] && p[23] && p[24]) {
-                const shoulderMid = { x: (p[11].x + p[12].x) / 2, y: (p[11].y + p[12].y) / 2, visibility: (p[11].visibility + p[12].visibility)/2 };
-                const hipMid = { x: (p[23].x + p[24].x) / 2, y: (p[23].y + p[24].y) / 2, visibility: (p[23].visibility + p[24].visibility)/2 };
+                const shoulderMid = { x: (p[11].x + p[12].x) / 2, y: (p[11].y + p[12].y) / 2, visibility: (p[11].visibility + p[12].visibility) / 2 };
+                const hipMid = { x: (p[23].x + p[24].x) / 2, y: (p[23].y + p[24].y) / 2, visibility: (p[23].visibility + p[24].visibility) / 2 };
                 drawLine(ctx, shoulderMid, hipMid, color, lineWidth);
-                
-                // 머리
-                if(p[0]) drawLine(ctx, shoulderMid, p[0], color, lineWidth);
+                if (p[0]) drawLine(ctx, shoulderMid, p[0], color, lineWidth);
             }
-            
-            // 어깨, 골반 라인
-            drawLine(ctx, p[11], p[12], color, lineWidth); 
-            drawLine(ctx, p[23], p[24], color, lineWidth);
-            
-            // 팔
-            drawLine(ctx, p[11], p[13], color, lineWidth);
-            drawLine(ctx, p[13], p[15], color, lineWidth);
-            drawLine(ctx, p[12], p[14], color, lineWidth);
-            drawLine(ctx, p[14], p[16], color, lineWidth);
+            drawLine(ctx, p[11], p[12], color, lineWidth); drawLine(ctx, p[23], p[24], color, lineWidth);
+            drawLine(ctx, p[11], p[13], color, lineWidth); drawLine(ctx, p[13], p[15], color, lineWidth);
+            drawLine(ctx, p[12], p[14], color, lineWidth); drawLine(ctx, p[14], p[16], color, lineWidth);
+            drawLine(ctx, p[15], p[17], color, lineWidth); drawLine(ctx, p[15], p[19], color, lineWidth);
+            drawLine(ctx, p[15], p[21], color, lineWidth); drawLine(ctx, p[16], p[18], color, lineWidth);
+            drawLine(ctx, p[16], p[20], color, lineWidth); drawLine(ctx, p[16], p[22], color, lineWidth);
+            drawLine(ctx, p[23], p[25], color, lineWidth); drawLine(ctx, p[25], p[27], color, lineWidth);
+            drawLine(ctx, p[24], p[26], color, lineWidth); drawLine(ctx, p[26], p[28], color, lineWidth);
+        }
 
-            // [NEW] 손 그리기
-            drawLine(ctx, p[15], p[17], color, lineWidth); // Left Wrist to Pinky
-            drawLine(ctx, p[15], p[19], color, lineWidth); // Left Wrist to Index
-            drawLine(ctx, p[15], p[21], color, lineWidth); // Left Wrist to Thumb
-            drawLine(ctx, p[16], p[18], color, lineWidth); // Right Wrist to Pinky
-            drawLine(ctx, p[16], p[20], color, lineWidth); // Right Wrist to Index
-            drawLine(ctx, p[16], p[22], color, lineWidth); // Right Wrist to Thumb
+        // [NEW] 에너지 빔 처리 함수
+        function handleBeams(ctx, width, height) {
+            ctx.strokeStyle = BEAM_COLOR;
+            ctx.lineWidth = BEAM_WIDTH;
 
-            // 다리
-            drawLine(ctx, p[23], p[25], color, lineWidth);
-            drawLine(ctx, p[25], p[27], color, lineWidth);
-            drawLine(ctx, p[24], p[26], color, lineWidth);
-            drawLine(ctx, p[26], p[28], color, lineWidth);
+            activeBeams.forEach(beam => {
+                // 위치 업데이트
+                beam.x += beam.direction * BEAM_SPEED;
+                
+                // 빔 그리기
+                ctx.beginPath();
+                ctx.moveTo(beam.x, beam.y);
+                ctx.lineTo(beam.x + beam.direction * BEAM_LENGTH, beam.y);
+                ctx.stroke();
+            });
+
+            // 화면 밖으로 나간 빔 제거
+            activeBeams = activeBeams.filter(beam => {
+                const endX = beam.x + beam.direction * BEAM_LENGTH;
+                if (beam.direction === 1) return beam.x < width; // 오른쪽으로 가는 빔
+                return endX > 0; // 왼쪽으로 가는 빔
+            });
         }
 
         function onResults(results) {
             if (!isRunning) return;
-
-            const width = videoElement.videoWidth;
-            const height = videoElement.videoHeight;
-            canvasElement.width = width;
-            canvasElement.height = height;
-
+            const width = videoElement.videoWidth; const height = videoElement.videoHeight;
+            canvasElement.width = width; canvasElement.height = height;
             canvasCtx.save();
             canvasCtx.clearRect(0, 0, width, height);
+            
+            // [NEW] 빔 애니메이션 처리
+            handleBeams(canvasCtx, width, height);
 
             if (results.poseLandmarks) {
-                const rawLm = results.poseLandmarks;
                 const p = {};
-                // [NEW] 손가락 랜드마크까지 추가
-                const requiredIndices = [0, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28];
-                requiredIndices.forEach(idx => {
-                    if(rawLm[idx]) p[idx] = toPixel(rawLm[idx], width, height);
-                    if(p[idx]) p[idx].visibility = rawLm[idx].visibility; // visibility 정보도 함께 저장
-                });
+                results.poseLandmarks.forEach((lm, idx) => p[idx] = toPixel(lm, width, height));
 
-                // === [엄격한 기준] ===
-                const BODY_TILT_LIMIT = 5;      
-                const ARM_HORIZON_LIMIT = 15;   
-                const ELBOW_STRAIGHT_MIN = 165; 
-                const KNEE_STRAIGHT_MIN = 170;  
+                const BODY_TILT_LIMIT = 5, ARM_HORIZON_LIMIT = 15, ELBOW_STRAIGHT_MIN = 165, KNEE_STRAIGHT_MIN = 170;
+                const BODY_TILT_BAD = 20, ARM_HORIZON_BAD = 45, ELBOW_STRAIGHT_BAD = 130, KNEE_STRAIGHT_BAD = 140;
 
-                // 색상 그라데이션을 위한 '나쁜' 기준
-                const BODY_TILT_BAD = 20;
-                const ARM_HORIZON_BAD = 45;
-                const ELBOW_STRAIGHT_BAD = 130;
-                const KNEE_STRAIGHT_BAD = 140;
+                const lTorso = calculateVerticalDeviation(p[11], p[23]), lLeg = calculateVerticalDeviation(p[23], p[27]);
+                const lKnee = calculateAngle(p[23], p[25], p[27]);
+                const rTorso = calculateVerticalDeviation(p[12], p[24]), rLeg = calculateVerticalDeviation(p[24], p[28]);
+                const rKnee = calculateAngle(p[24], p[26], p[28]);
+                const lElbow = calculateAngle(p[11], p[13], p[15]), rElbow = calculateAngle(p[12], p[14], p[16]);
+                const lHorizon = calculateHorizontalDeviation(p[11], p[15]), rHorizon = calculateHorizontalDeviation(p[12], p[16]);
 
-                let isBodyReady = false;
-                let isArmReady = false;
-                let failReason = "";
-                let progressScore = 0;
+                const leftBodyOk = (lTorso < BODY_TILT_LIMIT) && (lLeg < BODY_TILT_LIMIT) && (lKnee > KNEE_STRAIGHT_MIN);
+                const rightBodyOk = (rTorso < BODY_TILT_LIMIT) && (rLeg < BODY_TILT_LIMIT) && (rKnee > KNEE_STRAIGHT_MIN);
+                const leftArmOk = (lElbow > ELBOW_STRAIGHT_MIN) && (lHorizon < ARM_HORIZON_LIMIT);
+                const rightArmOk = (rElbow > ELBOW_STRAIGHT_MIN) && (rHorizon < ARM_HORIZON_LIMIT);
+                
+                const isBodyReady = leftBodyOk || rightBodyOk;
+                const isArmReady = leftArmOk || rightArmOk;
 
-                if(p[11] && p[23] && p[27] && p[12] && p[24] && p[28] && p[13] && p[15] && p[14] && p[16]) {
-                    const lTorso = calculateVerticalDeviation(p[11], p[23]);
-                    const lLeg = calculateVerticalDeviation(p[23], p[27]);
-                    const lKnee = calculateAngle(p[23], p[25], p[27]);
-                    
-                    const rTorso = calculateVerticalDeviation(p[12], p[24]);
-                    const rLeg = calculateVerticalDeviation(p[24], p[28]);
-                    const rKnee = calculateAngle(p[24], p[26], p[28]);
+                // [NEW] 빔 발사 조건 체크
+                if (p[0] && p[11] && p[12] && p[15] && p[16]) {
+                    const shoulderWidth = getDistance(p[11], p[12]);
+                    // 왼쪽 팔
+                    const isLeftArmCurrentlyReady = (lElbow < ELBOW_STRAIGHT_BAD) && (getDistance(p[15], p[0]) < shoulderWidth);
+                    if (wasLeftArmReadyToFire && leftArmOk && leftBodyOk) {
+                        activeBeams.push({ x: p[15].x, y: p[15].y, direction: -1 }); // 왼쪽 방향
+                    }
+                    wasLeftArmReadyToFire = isLeftArmCurrentlyReady;
 
-                    const leftBodyOk = (lTorso < BODY_TILT_LIMIT) && (lLeg < BODY_TILT_LIMIT) && (lKnee > KNEE_STRAIGHT_MIN);
-                    const rightBodyOk = (rTorso < BODY_TILT_LIMIT) && (rLeg < BODY_TILT_LIMIT) && (rKnee > KNEE_STRAIGHT_MIN);
-
-                    isBodyReady = leftBodyOk || rightBodyOk;
-
-                    const lElbow = calculateAngle(p[11], p[13], p[15]);
-                    const rElbow = calculateAngle(p[12], p[14], p[16]);
-                    const lHorizon = calculateHorizontalDeviation(p[11], p[15]);
-                    const rHorizon = calculateHorizontalDeviation(p[12], p[16]);
-
-                    const leftArmOk = (lElbow > ELBOW_STRAIGHT_MIN) && (lHorizon < ARM_HORIZON_LIMIT);
-                    const rightArmOk = (rElbow > ELBOW_STRAIGHT_MIN) && (rHorizon < ARM_HORIZON_LIMIT);
-
-                    isArmReady = leftArmOk || rightArmOk;
-                    
-                    // 진행도 계산
-                    const lBodyScore = Math.min(
-                        getNormalizedScore(lTorso, BODY_TILT_LIMIT, BODY_TILT_BAD),
-                        getNormalizedScore(lLeg, BODY_TILT_LIMIT, BODY_TILT_BAD),
-                        getNormalizedScore(lKnee, KNEE_STRAIGHT_MIN, KNEE_STRAIGHT_BAD, true)
-                    );
-                    const lArmScore = Math.min(
-                        getNormalizedScore(lHorizon, ARM_HORIZON_LIMIT, ARM_HORIZON_BAD),
-                        getNormalizedScore(lElbow, ELBOW_STRAIGHT_MIN, ELBOW_STRAIGHT_BAD, true)
-                    );
-                    const rBodyScore = Math.min(
-                        getNormalizedScore(rTorso, BODY_TILT_LIMIT, BODY_TILT_BAD),
-                        getNormalizedScore(rLeg, BODY_TILT_LIMIT, BODY_TILT_BAD),
-                        getNormalizedScore(rKnee, KNEE_STRAIGHT_MIN, KNEE_STRAIGHT_BAD, true)
-                    );
-                    const rArmScore = Math.min(
-                        getNormalizedScore(rHorizon, ARM_HORIZON_LIMIT, ARM_HORIZON_BAD),
-                        getNormalizedScore(rElbow, ELBOW_STRAIGHT_MIN, ELBOW_STRAIGHT_BAD, true)
-                    );
-                    
-                    // 양쪽 중 더 잘된 쪽의 점수를 최종 점수로 사용
-                    const leftScore = Math.min(lBodyScore, lArmScore);
-                    const rightScore = Math.min(rBodyScore, rArmScore);
-                    progressScore = Math.max(leftScore, rightScore);
-
-                    if (!isBodyReady) failReason = "BODY TILT DETECTED";
-                    else if (!isArmReady) failReason = "ARM NOT HORIZONTAL";
+                    // 오른쪽 팔
+                    const isRightArmCurrentlyReady = (rElbow < ELBOW_STRAIGHT_BAD) && (getDistance(p[16], p[0]) < shoulderWidth);
+                    if (wasRightArmReadyToFire && rightArmOk && rightBodyOk) {
+                        activeBeams.push({ x: p[16].x, y: p[16].y, direction: 1 }); // 오른쪽 방향
+                    }
+                    wasRightArmReadyToFire = isRightArmCurrentlyReady;
                 }
+
+                const lBodyS = Math.min(getNormalizedScore(lTorso, BODY_TILT_LIMIT, BODY_TILT_BAD), getNormalizedScore(lLeg, BODY_TILT_LIMIT, BODY_TILT_BAD), getNormalizedScore(lKnee, KNEE_STRAIGHT_MIN, KNEE_STRAIGHT_BAD, true));
+                const lArmS = Math.min(getNormalizedScore(lHorizon, ARM_HORIZON_LIMIT, ARM_HORIZON_BAD), getNormalizedScore(lElbow, ELBOW_STRAIGHT_MIN, ELBOW_STRAIGHT_BAD, true));
+                const rBodyS = Math.min(getNormalizedScore(rTorso, BODY_TILT_LIMIT, BODY_TILT_BAD), getNormalizedScore(rLeg, BODY_TILT_LIMIT, BODY_TILT_BAD), getNormalizedScore(rKnee, KNEE_STRAIGHT_MIN, KNEE_STRAIGHT_BAD, true));
+                const rArmS = Math.min(getNormalizedScore(rHorizon, ARM_HORIZON_LIMIT, ARM_HORIZON_BAD), getNormalizedScore(rElbow, ELBOW_STRAIGHT_MIN, ELBOW_STRAIGHT_BAD, true));
+                const progressScore = Math.max(Math.min(lBodyS, lArmS), Math.min(rBodyS, rArmS));
 
                 const isSuccess = isBodyReady && isArmReady;
-                let color;
+                let color, failReason = "";
+                if (!isBodyReady) failReason = "BODY TILT DETECTED"; else if (!isArmReady) failReason = "ARM NOT HORIZONTAL";
 
                 if (isSuccess) {
-                    color = "#00FF00"; // GREEN
-                    messageDiv.innerText = "SUCCESS";
-                    messageDiv.style.borderColor = "#00FF00";
-                    messageDiv.style.color = "#00FF00";
-                    debugDiv.innerText = `POSE ACCURACY: ${(progressScore * 100).toFixed(0)}%`;
-                    
-                    // [NEW] 소리 재생 로직: 성공 상태로 '진입'했을 때 한번만 재생
-                    if (!wasSuccessLastFrame) {
-                        playSuccessSound();
+                    color = "#00FF00"; messageDiv.innerText = "SUCCESS"; messageDiv.style.borderColor = color; messageDiv.style.color = color;
+                    if (!wasSuccessLastFrame && successAudio) {
+                        successAudio.currentTime = 0; // 재생 위치를 처음으로 되돌림
+                        successAudio.play().catch(e => console.error("Audio play failed:", e));
                     }
-
                 } else {
-                    // 진행도에 따라 빨간색 -> 흰색으로 색상 변경
-                    const whiteComponent = Math.floor(255 * progressScore);
-                    color = `rgb(255, ${whiteComponent}, ${whiteComponent})`;
-                    
-                    messageDiv.innerText = failReason || "STAND STRAIGHT";
-                    messageDiv.style.borderColor = color; // 테두리 색도 같이 변경
-                    messageDiv.style.color = "#FFFFFF";
-                    debugDiv.innerText = `POSE ACCURACY: ${(progressScore * 100).toFixed(0)}%`;
+                    const white = Math.floor(255 * progressScore); color = `rgb(255, ${white}, ${white})`;
+                    messageDiv.innerText = failReason || "STAND STRAIGHT"; messageDiv.style.borderColor = color; messageDiv.style.color = "#FFFFFF";
                 }
-                
-                // 이전 프레임 상태 업데이트
+                debugDiv.innerText = `POSE ACCURACY: ${(progressScore * 100).toFixed(0)}%`;
                 wasSuccessLastFrame = isSuccess;
-
-                // 스틱맨 그리기 호출
                 drawStickFigure(canvasCtx, p, color);
+
             } else {
-                 messageDiv.innerText = "NO PERSON DETECTED";
-                 messageDiv.style.borderColor = "#FF0000";
-                 messageDiv.style.color = "#FFFFFF";
-                 debugDiv.innerText = "";
-                 wasSuccessLastFrame = false; // 사람이 없으면 성공 상태 초기화
+                messageDiv.innerText = "NO PERSON DETECTED"; messageDiv.style.borderColor = "#FF0000"; messageDiv.style.color = "#FFFFFF"; debugDiv.innerText = "";
+                wasSuccessLastFrame = false; wasLeftArmReadyToFire = false; wasRightArmReadyToFire = false;
             }
             canvasCtx.restore();
         }
 
-        async function setupCamera() {
-            if (currentStream) currentStream.getTracks().forEach(track => track.stop());
-            const constraints = {
-                video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: isFrontCamera ? 'user' : 'environment' },
-                audio: false
-            };
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia(constraints);
-                currentStream = stream;
-                videoElement.srcObject = stream;
-                if (isFrontCamera) { videoElement.className = 'mirror'; canvasElement.className = 'mirror'; } 
-                else { videoElement.className = 'normal'; canvasElement.className = 'normal'; }
-                return new Promise((resolve) => { videoElement.onloadedmetadata = () => { resolve(videoElement); }; });
-            } catch (err) { alert("Camera Error: " + err.message); }
-        }
-
-        async function renderFrame() {
-            if (!videoElement.paused && !videoElement.ended) { await pose.send({image: videoElement}); }
-            requestAnimationFrame(renderFrame);
-        }
-
-        async function initPose() {
-            messageDiv.innerText = "LOADING MODEL...";
-            pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
-            pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
-            pose.onResults(onResults);
-            await setupCamera();
-            videoElement.play();
-            renderFrame();
-            messageDiv.innerText = "READY";
-        }
-
+        async function setupCamera() { if (currentStream) currentStream.getTracks().forEach(track => track.stop()); const constraints = { video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: isFrontCamera ? 'user' : 'environment' }, audio: false }; try { const stream = await navigator.mediaDevices.getUserMedia(constraints); currentStream = stream; videoElement.srcObject = stream; videoElement.className = isFrontCamera ? 'mirror' : 'normal'; canvasElement.className = isFrontCamera ? 'mirror' : 'normal'; return new Promise((resolve) => { videoElement.onloadedmetadata = () => { resolve(videoElement); }; }); } catch (err) { alert("Camera Error: " + err.message); } }
+        async function renderFrame() { if (isRunning && !videoElement.paused && !videoElement.ended) { await pose.send({ image: videoElement }); } requestAnimationFrame(renderFrame); }
+        async function initPose() { messageDiv.innerText = "LOADING MODEL..."; pose = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` }); pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 }); pose.onResults(onResults); await setupCamera(); videoElement.play(); renderFrame(); messageDiv.innerText = "READY"; }
         startOverlay.addEventListener('click', () => {
-            if (audioContext.state === 'suspended') {
-                audioContext.resume();
+            // [NEW] 사용자가 클릭했을 때 오디오 객체를 생성하고 로드
+            if (!successAudio) {
+                successAudio = new Audio('success.mp3'); // HTML 파일과 같은 위치에 있는 success.mp3
+                successAudio.load(); // 미리 파일을 불러옴
             }
             startOverlay.style.display = 'none';
             isRunning = true;
-            
-            // 더미 사운드를 재생하여 오디오 컨텍스트를 활성화 (iOS 호환성)
-            playSuccessSound(); 
-            // 바로 소리를 멈추기 위해 이득을 0으로 설정
-            const g = audioContext.createGain();
-            g.gain.setValueAtTime(0, audioContext.currentTime);
-
             initPose();
         });
-
-        switchBtn.addEventListener('click', async () => {
-            isFrontCamera = !isFrontCamera;
-            switchBtn.innerText = "LOADING...";
-            await setupCamera();
-            videoElement.play();
-            switchBtn.innerText = "CAM SWITCH";
-        });
-
+        switchBtn.addEventListener('click', async () => { isFrontCamera = !isFrontCamera; switchBtn.innerText = "LOADING..."; await setupCamera(); videoElement.play(); switchBtn.innerText = "CAM SWITCH"; });
     </script>
 </body>
 </html>
